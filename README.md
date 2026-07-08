@@ -2,62 +2,40 @@
 
 這是一個使用 PySide6 開發的 GUI 工具，用於從 Excel 檔案中提取 Lux 數據並產生成準確度分析圖表。
 
-## 解決 ModuleNotFoundError: No module named 'PySide6'
+## 解決 ModuleNotFoundError (環境問題排除)
 
-如果您在執行時遇到此錯誤，表示您的 Python 環境尚未安裝必要的套件。請按照以下「安裝說明」進行操作。
+如果您在執行 `pip install -r requirements.txt` 後依然出現 `ModuleNotFoundError`，通常是因為您的 `python` 與 `pip` 指令版本不一致（例如 python 是 3.11，但 pip 把套件裝到了 3.8）。
 
-## 安裝說明
-
-請確保您的電腦已安裝 Python 3.8+。建議使用虛擬環境 (Virtual Environment) 以避免套件衝突。
-
-### 1. 建立並啟動虛擬環境 (建議)
-
-**Windows:**
+### 快速修復命令
+請嘗試使用以下指令來安裝，這會確保套件裝在目前的 Python 環境中：
 ```bash
-python -m venv venv
-venv\Scripts\activate
+python -m pip install -r requirements.txt
 ```
 
-**macOS/Linux:**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
+---
 
-### 2. 安裝必要套件
+## 標準安裝說明 (建議)
 
-在啟動虛擬環境後，執行以下命令：
+建議使用虛擬環境 (Virtual Environment) 以避免套件衝突。
 
-```bash
-pip install -r requirements.txt
-```
+### 1. 執行自動設定腳本 (Windows)
+在資料夾中找到 **`setup_windows.bat`** 並雙擊執行。它會自動建立虛擬環境並安裝所有套件。
 
-### 3. VS Code 設定 (重要)
-
-如果您使用 VS Code：
-1. 按下 `Ctrl+Shift+P` (或 `Cmd+Shift+P`)。
+### 2. VS Code 設定 (重要)
+安裝完後，請務必在 VS Code 中切換到正確的環境：
+1. 按下 `Ctrl+Shift+P`。
 2. 輸入並選擇 **"Python: Select Interpreter"**。
-3. 選擇剛才建立的虛擬環境 (路徑通常包含 `./venv/Scripts/python.exe` 或 `./venv/bin/python`)。
+3. 選擇路徑中包含 **`venv\Scripts\python.exe`** 的那一項。
 
 ## 功能特點
-
-1.  **讀取 Excel (讀檔)**：載入 Excel 活頁簿，並在界面上直接檢視內容。
-2.  **動態配置**：可於 UI 上自由設定 CCT 模式範圍、係數 (Cr, Cg, Cb, Cc, Cwb) 的儲存格位置，以及數據範圍。
-3.  **自動化繪圖 (執行)**：一鍵生成 2x2 的 Lux 準確度分析圖。
-4.  **自動存檔**：圖表會自動儲存至 `output_file/lux_accuracy_for_all.png`。
-
-## 使用方法
-
-1.  執行主程式：
-    ```bash
-    python main.py
-    ```
-2.  點擊 **"Load Excel File (讀檔)"** 選擇數據檔案。
-3.  點擊 **"Run & Generate Plot (執行)"** 產出結果。
+1. **讀取 Excel (讀檔)**：載入 Excel 活頁簿，並在界面上直接檢視內容。
+2. **動態配置**：可於 UI 上自由設定範圍、係數儲存格。
+3. **自動化繪圖 (執行)**：一鍵生成 2x2 的準確度分析圖。
+4. **自動存檔**：圖表儲存至 `output_file/lux_accuracy_for_all.png`。
 
 ## 檔案結構
-
--   `main.py`: 主程式邏輯與介面。
--   `requirements.txt`: 必要的 Python 套件清單。
--   `input_file/`: 建議存放輸入檔案目錄。
--   `output_file/`: 產生的分析圖表儲存目錄。
+- `main.py`: 主程式。
+- `setup_windows.bat`: 自動安裝腳本。
+- `requirements.txt`: 套件清單。
+- `input_file/`: 輸入目錄。
+- `output_file/`: 輸出目錄。

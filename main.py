@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QLabel, QFileDialog, QFormLayout, QGroupBox,
     QScrollArea, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
+from openpyxl.cell.cell import Cell
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,6 +23,10 @@ def get_excel_column_name(n):
         n, remainder = divmod(n - 1, 26)
         name = chr(65 + remainder) + name
     return name
+
+class SelectableLineEdit(QLineEdit):
+    def __init__(self, contents="", parent=None):
+        super().__init__(contents, parent)
 
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, width=14, height=12, dpi=100):
@@ -64,34 +69,38 @@ class MainWindow(QMainWindow):
         self.config_layout = QFormLayout(self.config_group)
         self.config_group.setFixedWidth(380)
 
-        self.cct_range_input = QLineEdit("C5:C19")
-        self.config_layout.addRow("CCT Pattern Range (e.g. C5:C19):", self.cct_range_input)
-
-        self.cr_cell = QLineEdit("C22")
-        self.cg_cell = QLineEdit("C23")
-        self.cb_cell = QLineEdit("C24")
-        self.cc_cell = QLineEdit("C25")
-        self.cwb_cell = QLineEdit("C26")
-
-        self.config_layout.addRow("Cr Cell (預設 C22):", self.cr_cell)
-        self.config_layout.addRow("Cg Cell (預設 C23):", self.cg_cell)
-        self.config_layout.addRow("Cb Cell (預設 C24):", self.cb_cell)
-        self.config_layout.addRow("Cc Cell (預設 C25):", self.cc_cell)
-        self.config_layout.addRow("Cwb Cell (預設 C26):", self.cwb_cell)
-
-        self.lux_range_input = QLineEdit("I31:I75")
-        self.config_layout.addRow("Reference Lux Range (e.g. I31:I75):", self.lux_range_input)
-
-        self.reported_range_input = QLineEdit("U31:U75")
-        self.config_layout.addRow("Reported Lux Range (e.g. U31:U75):", self.reported_range_input)
-
+        # Interactive LineEdits
+        self.cct_range_input = SelectableLineEdit("C5:C19")
+        self.cr_cell = SelectableLineEdit("C22")
+        self.cg_cell = SelectableLineEdit("C23")
+        self.cb_cell = SelectableLineEdit("C24")
+        self.cc_cell = SelectableLineEdit("C25")
+        self.cwb_cell = SelectableLineEdit("C26")
+        self.lux_range_input = SelectableLineEdit("I31:I75")
+        self.reported_range_input = SelectableLineEdit("U31:U75")
         self.subtitle_input = QLineEdit("ALS Summary_Coef(ARRI + XRite_Low + TPE_MFG + VN_MFG)_Verify(XRite_Low)")
-        self.config_layout.addRow("Plot Subtitle (標題):", self.subtitle_input)
+
+        self.config_layout.addRow("CCT Pattern Range:", self.cct_range_input)
+        self.config_layout.addRow("Cr Cell:", self.cr_cell)
+        self.config_layout.addRow("Cg Cell:", self.cg_cell)
+        self.config_layout.addRow("Cb Cell:", self.cb_cell)
+        self.config_layout.addRow("Cc Cell:", self.cc_cell)
+        self.config_layout.addRow("Cwb Cell:", self.cwb_cell)
+        self.config_layout.addRow("Ref Lux Range:", self.lux_range_input)
+        self.config_layout.addRow("Reported Lux Range:", self.reported_range_input)
+        self.config_layout.addRow("Plot Subtitle:", self.subtitle_input)
+
+        # Track which line edit is focused
+        self.focused_line_edit = None
+        for le in [self.cct_range_input, self.cr_cell, self.cg_cell, self.cb_cell,
+                   self.cc_cell, self.cwb_cell, self.lux_range_input, self.reported_range_input]:
+            le.installEventFilter(self)
 
         self.data_layout.addWidget(self.config_group)
 
         # Right Panel: Table View
         self.table_widget = QTableWidget()
+        self.table_widget.itemSelectionChanged.connect(self.on_selection_changed)
         self.data_layout.addWidget(self.table_widget)
 
         # Plot View Tab
@@ -109,6 +118,46 @@ class MainWindow(QMainWindow):
         self.wb = None
         self.file_path = None
 
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.FocusIn:
+            if isinstance(obj, SelectableLineEdit):
+                self.set_focused_line_edit(obj)
+        return super().eventFilter(obj, event)
+
+    def set_focused_line_edit(self, le):
+        # Reset previous
+        if self.focused_line_edit:
+            self.focused_line_edit.setStyleSheet("")
+
+        self.focused_line_edit = le
+        # Highlight new
+        if self.focused_line_edit:
+            self.focused_line_edit.setStyleSheet("background-color: #e6f3ff; border: 2px solid #0078d7;")
+
+    def on_selection_changed(self):
+        if not self.focused_line_edit:
+            return
+
+        selected_ranges = self.table_widget.selectedRanges()
+        if not selected_ranges:
+            return
+
+        sel = selected_ranges[0]
+        top = sel.topRow() + 1
+        bottom = sel.bottomRow() + 1
+        left = sel.leftColumn()
+        right = sel.rightColumn()
+
+        col_start = get_excel_column_name(left)
+        col_end = get_excel_column_name(right)
+
+        if top == bottom and left == right:
+            range_str = f"{col_start}{top}"
+        else:
+            range_str = f"{col_start}{top}:{col_end}{bottom}"
+
+        self.focused_line_edit.setText(range_str)
+
     def to_float(self, val):
         try:
             return float(val)
@@ -118,12 +167,32 @@ class MainWindow(QMainWindow):
     def get_range_values(self, ws, cell_range):
         values = []
         try:
-            for row in ws[cell_range]:
-                for cell in row:
-                    values.append(cell.value)
+            items = ws[cell_range]
+            if isinstance(items, Cell):
+                values.append(items.value)
+            else:
+                for row in items:
+                    if isinstance(row, Cell):
+                         values.append(row.value)
+                    else:
+                        for cell in row:
+                            values.append(cell.value)
         except Exception as e:
             print(f"Error reading range {cell_range}: {e}")
         return values
+
+    def get_single_cell_value(self, ws, cell_addr):
+        try:
+            item = ws[cell_addr]
+            if isinstance(item, Cell):
+                return item.value
+            else:
+                # User selected a range where a single cell was expected
+                # Take the top-left one
+                return item[0][0].value
+        except Exception as e:
+            print(f"Error reading cell {cell_addr}: {e}")
+            return None
 
     def build_cct_cycle(self, ws, data_len):
         pattern_range = self.cct_range_input.text()
@@ -149,11 +218,11 @@ class MainWindow(QMainWindow):
 
     def extract_sheet_data(self, ws):
         coeff_dict = {
-            "Cr": self.to_float(ws[self.cr_cell.text()].value),
-            "Cg": self.to_float(ws[self.cg_cell.text()].value),
-            "Cb": self.to_float(ws[self.cb_cell.text()].value),
-            "Cc": self.to_float(ws[self.cc_cell.text()].value),
-            "Cwb": self.to_float(ws[self.cwb_cell.text()].value),
+            "Cr": self.to_float(self.get_single_cell_value(ws, self.cr_cell.text())),
+            "Cg": self.to_float(self.get_single_cell_value(ws, self.cg_cell.text())),
+            "Cb": self.to_float(self.get_single_cell_value(ws, self.cb_cell.text())),
+            "Cc": self.to_float(self.get_single_cell_value(ws, self.cc_cell.text())),
+            "Cwb": self.to_float(self.get_single_cell_value(ws, self.cwb_cell.text())),
         }
 
         lux_values = self.get_range_values(ws, self.lux_range_input.text())
@@ -263,10 +332,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Could not load file: {e}")
 
     def display_sheet_in_table(self, ws):
+        self.table_widget.blockSignals(True)
         self.table_widget.setRowCount(ws.max_row)
         self.table_widget.setColumnCount(ws.max_column)
 
-        # Add Excel-like headers
         col_headers = [get_excel_column_name(i) for i in range(ws.max_column)]
         self.table_widget.setHorizontalHeaderLabels(col_headers)
         row_headers = [str(i + 1) for i in range(ws.max_row)]
@@ -276,6 +345,7 @@ class MainWindow(QMainWindow):
             for j, cell in enumerate(row):
                 val = str(cell.value) if cell.value is not None else ""
                 self.table_widget.setItem(i, j, QTableWidgetItem(val))
+        self.table_widget.blockSignals(False)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
