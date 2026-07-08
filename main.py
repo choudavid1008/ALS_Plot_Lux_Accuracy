@@ -1,0 +1,284 @@
+import sys
+import os
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
+    QLineEdit, QLabel, QFileDialog, QFormLayout, QGroupBox,
+    QScrollArea, QMessageBox
+)
+from PySide6.QtCore import Qt
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from openpyxl import load_workbook
+from pathlib import Path
+
+def get_excel_column_name(n):
+    """Convert a 0-indexed column number to an Excel column name (0 -> A, 25 -> Z, 26 -> AA)."""
+    name = ""
+    n += 1
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+class PlotCanvas(FigureCanvas):
+    def __init__(self, parent=None, width=14, height=12, dpi=100):
+        self.fig, self.axes = plt.subplots(2, 2, figsize=(width, height), dpi=dpi)
+        super(PlotCanvas, self).__init__(self.fig)
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Lux Accuracy Tool")
+        self.resize(1400, 900)
+
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)
+
+        # Top Bar
+        self.top_layout = QHBoxLayout()
+        self.load_btn = QPushButton("Load Excel File (讀檔)")
+        self.load_btn.clicked.connect(self.load_file)
+        self.top_layout.addWidget(self.load_btn)
+
+        self.run_btn = QPushButton("Run & Generate Plot (執行)")
+        self.run_btn.clicked.connect(self.run_process)
+        self.top_layout.addWidget(self.run_btn)
+
+        self.main_layout.addLayout(self.top_layout)
+
+        # Tab Widget
+        self.tabs = QTabWidget()
+        self.main_layout.addWidget(self.tabs)
+
+        # Data View Tab
+        self.data_tab = QWidget()
+        self.data_layout = QHBoxLayout(self.data_tab)
+        self.tabs.addTab(self.data_tab, "Data View (表格與設定)")
+
+        # Left Panel: Config
+        self.config_group = QGroupBox("Configuration (設定)")
+        self.config_layout = QFormLayout(self.config_group)
+        self.config_group.setFixedWidth(380)
+
+        self.cct_range_input = QLineEdit("C5:C19")
+        self.config_layout.addRow("CCT Pattern Range (e.g. C5:C19):", self.cct_range_input)
+
+        self.cr_cell = QLineEdit("C22")
+        self.cg_cell = QLineEdit("C23")
+        self.cb_cell = QLineEdit("C24")
+        self.cc_cell = QLineEdit("C25")
+        self.cwb_cell = QLineEdit("C26")
+
+        self.config_layout.addRow("Cr Cell (預設 C22):", self.cr_cell)
+        self.config_layout.addRow("Cg Cell (預設 C23):", self.cg_cell)
+        self.config_layout.addRow("Cb Cell (預設 C24):", self.cb_cell)
+        self.config_layout.addRow("Cc Cell (預設 C25):", self.cc_cell)
+        self.config_layout.addRow("Cwb Cell (預設 C26):", self.cwb_cell)
+
+        self.lux_range_input = QLineEdit("I31:I75")
+        self.config_layout.addRow("Reference Lux Range (e.g. I31:I75):", self.lux_range_input)
+
+        self.reported_range_input = QLineEdit("U31:U75")
+        self.config_layout.addRow("Reported Lux Range (e.g. U31:U75):", self.reported_range_input)
+
+        self.subtitle_input = QLineEdit("ALS Summary_Coef(ARRI + XRite_Low + TPE_MFG + VN_MFG)_Verify(XRite_Low)")
+        self.config_layout.addRow("Plot Subtitle (標題):", self.subtitle_input)
+
+        self.data_layout.addWidget(self.config_group)
+
+        # Right Panel: Table View
+        self.table_widget = QTableWidget()
+        self.data_layout.addWidget(self.table_widget)
+
+        # Plot View Tab
+        self.plot_tab = QWidget()
+        self.plot_layout = QVBoxLayout(self.plot_tab)
+        self.tabs.addTab(self.plot_tab, "Plot View (圖表)")
+
+        self.canvas = PlotCanvas(self.plot_tab)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setWidget(self.canvas)
+        self.plot_layout.addWidget(self.scroll_area)
+
+        # State
+        self.wb = None
+        self.file_path = None
+
+    def to_float(self, val):
+        try:
+            return float(val)
+        except Exception:
+            return np.nan
+
+    def get_range_values(self, ws, cell_range):
+        values = []
+        try:
+            for row in ws[cell_range]:
+                for cell in row:
+                    values.append(cell.value)
+        except Exception as e:
+            print(f"Error reading range {cell_range}: {e}")
+        return values
+
+    def build_cct_cycle(self, ws, data_len):
+        pattern_range = self.cct_range_input.text()
+        pattern_vals = self.get_range_values(ws, pattern_range)
+        pattern = [
+            int(self.to_float(v))
+            for v in pattern_vals
+            if not pd.isna(self.to_float(v))
+        ]
+        if not pattern:
+            return [], [], 0
+
+        pattern_len = len(pattern)
+        cct_list = [pattern[i % len(pattern)] for i in range(data_len)]
+
+        color_map = {
+            3000: "#FF0000",   # Red
+            4000: "#0066FF",   # Blue
+            4150: "#00AA00",   # Green
+        }
+        color_list = [color_map.get(cct, "#808080") for cct in cct_list]
+        return cct_list, color_list, pattern_len
+
+    def extract_sheet_data(self, ws):
+        coeff_dict = {
+            "Cr": self.to_float(ws[self.cr_cell.text()].value),
+            "Cg": self.to_float(ws[self.cg_cell.text()].value),
+            "Cb": self.to_float(ws[self.cb_cell.text()].value),
+            "Cc": self.to_float(ws[self.cc_cell.text()].value),
+            "Cwb": self.to_float(ws[self.cwb_cell.text()].value),
+        }
+
+        lux_values = self.get_range_values(ws, self.lux_range_input.text())
+        reported_values = self.get_range_values(ws, self.reported_range_input.text())
+
+        df_tmp = pd.DataFrame({
+            "lux": lux_values,
+            "reported": reported_values
+        }).dropna()
+
+        lux_values = df_tmp["lux"].tolist()
+        reported_values = df_tmp["reported"].tolist()
+        data_len = len(lux_values)
+
+        cct_list, color_list, pattern_len = self.build_cct_cycle(ws, data_len)
+        if not cct_list:
+             return coeff_dict, pd.DataFrame()
+
+        df = pd.DataFrame({
+            "CL-200A Lux": lux_values,
+            "Reported_LUX": reported_values,
+            "CCT": cct_list,
+            "Color": color_list
+        })
+        df["CL-200A Lux"] = pd.to_numeric(df["CL-200A Lux"], errors="coerce")
+        df["Reported_LUX"] = pd.to_numeric(df["Reported_LUX"], errors="coerce")
+        df = df.dropna()
+        return coeff_dict, df
+
+    def plot_lux_accuracy_on_ax(self, ax, df, sheet_name, file_name, coeff_dict):
+        if df.empty:
+            ax.set_title(f"{sheet_name}\nNo data")
+            ax.grid(True)
+            return
+
+        x = df["CL-200A Lux"]
+        y = df["Reported_LUX"]
+        max_val = max(x.max(), y.max()) * 1.1 if not df.empty else 100
+        x_line = np.linspace(0, max_val, 200)
+
+        for cct, group in df.groupby("CCT"):
+            ax.scatter(group["CL-200A Lux"], group["Reported_LUX"],
+                       color=group["Color"].iloc[0], s=5, alpha=0.85, label=f"{cct}K")
+
+        ax.plot(x_line, x_line, "k--", linewidth=1.2, label="Ideal")
+        ax.fill_between(x_line, 0.9 * x_line, 1.1 * x_line, color="gray", alpha=0.2, label="±10%")
+        ax.set_xlabel("Reference Lux (CL-200A)")
+        ax.set_ylabel("Reported Lux")
+        ax.set_title(f"{sheet_name}\n{file_name}", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8, loc="lower right")
+
+        coeff_text = (
+            f"Cr: {coeff_dict['Cr']:.3f}\n"
+            f"Cg: {coeff_dict['Cg']:.3f}\n"
+            f"Cb: {coeff_dict['Cb']:.3f}\n"
+            f"Cc: {coeff_dict['Cc']:.3f}\n"
+            f"Cwb: {coeff_dict['Cwb']:.3f}"
+        )
+        ax.text(0.03, 0.95, coeff_text, transform=ax.transAxes, fontsize=8,
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.85), verticalalignment="top")
+
+    def run_process(self):
+        if not self.wb:
+            QMessageBox.warning(self, "Warning", "Please load an Excel file first.")
+            return
+
+        sheets = ["Negroni (red)", "Pine (green)", "Haze midnight (black)", "Silver"]
+        file_name = os.path.basename(self.file_path)
+
+        self.canvas.fig.clf()
+        self.canvas.axes = self.canvas.fig.subplots(2, 2)
+        axes = self.canvas.axes.flatten()
+
+        for i, sheet in enumerate(sheets):
+            ax = axes[i]
+            if sheet not in self.wb.sheetnames:
+                ax.set_title(f"{sheet}\nNot found")
+                ax.grid(True)
+                continue
+
+            ws = self.wb[sheet]
+            coeff_dict, df = self.extract_sheet_data(ws)
+            self.plot_lux_accuracy_on_ax(ax, df, sheet, file_name, coeff_dict)
+
+        self.canvas.fig.suptitle(self.subtitle_input.text(), fontsize=16)
+        self.canvas.fig.tight_layout(rect=[0, 0, 1, 0.96])
+        self.canvas.draw()
+
+        # Save file
+        os.makedirs("output_file", exist_ok=True)
+        out_path = os.path.join("output_file", "lux_accuracy_for_all.png")
+        self.canvas.fig.savefig(out_path, dpi=300, bbox_inches="tight")
+
+        # Switch tab
+        self.tabs.setCurrentIndex(1)
+        QMessageBox.information(self, "Success", f"Plot generated and saved to {out_path}")
+
+    def load_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "", "Excel Files (*.xlsx *.xls)")
+        if file_path:
+            self.file_path = file_path
+            try:
+                self.wb = load_workbook(file_path, data_only=True)
+                self.display_sheet_in_table(self.wb.active)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not load file: {e}")
+
+    def display_sheet_in_table(self, ws):
+        self.table_widget.setRowCount(ws.max_row)
+        self.table_widget.setColumnCount(ws.max_column)
+
+        # Add Excel-like headers
+        col_headers = [get_excel_column_name(i) for i in range(ws.max_column)]
+        self.table_widget.setHorizontalHeaderLabels(col_headers)
+        row_headers = [str(i + 1) for i in range(ws.max_row)]
+        self.table_widget.setVerticalHeaderLabels(row_headers)
+
+        for i, row in enumerate(ws.iter_rows()):
+            for j, cell in enumerate(row):
+                val = str(cell.value) if cell.value is not None else ""
+                self.table_widget.setItem(i, j, QTableWidgetItem(val))
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
