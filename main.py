@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
     QLineEdit, QLabel, QFileDialog, QFormLayout, QGroupBox,
-    QScrollArea, QMessageBox
+    QScrollArea, QMessageBox, QGridLayout
 )
 from PySide6.QtCore import Qt, QEvent
 from openpyxl.cell.cell import Cell
@@ -30,7 +30,6 @@ class SelectableLineEdit(QLineEdit):
 
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, width=14, height=12, dpi=100):
-        # Initializing with exactly 14x12 as per user's original script
         self.fig, self.axes = plt.subplots(2, 2, figsize=(width, height), dpi=dpi)
         super(PlotCanvas, self).__init__(self.fig)
 
@@ -38,7 +37,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Lux Accuracy Tool")
-        self.resize(1400, 900)
+        self.resize(1500, 950)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -66,9 +65,15 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.data_tab, "Data View (表格與設定)")
 
         # Left Panel: Config
+        self.config_scroll = QScrollArea()
+        self.config_scroll.setWidgetResizable(True)
+        self.config_scroll.setFixedWidth(420)
+        self.config_container = QWidget()
+        self.config_vbox = QVBoxLayout(self.config_container)
+        self.config_scroll.setWidget(self.config_container)
+
         self.config_group = QGroupBox("Configuration (設定)")
         self.config_layout = QFormLayout(self.config_group)
-        self.config_group.setFixedWidth(380)
 
         # Interactive LineEdits
         self.cct_range_input = SelectableLineEdit("C5:C19")
@@ -91,13 +96,36 @@ class MainWindow(QMainWindow):
         self.config_layout.addRow("Reported Lux Range:", self.reported_range_input)
         self.config_layout.addRow("Plot Subtitle:", self.subtitle_input)
 
+        # Color Settings Group
+        self.color_group = QGroupBox("CCT Color Settings (顏色設定)")
+        self.color_layout = QGridLayout(self.color_group)
+        self.color_layout.addWidget(QLabel("CCT (K)"), 0, 0)
+        self.color_layout.addWidget(QLabel("Color (Hex)"), 0, 1)
+
+        self.color_inputs = []
+        default_colors = [("3000", "#FF0000"), ("4000", "#0066FF"), ("4150", "#00AA00")]
+        for i, (cct, color) in enumerate(default_colors):
+            cct_in = QLineEdit(cct)
+            col_in = QLineEdit(color)
+            self.color_layout.addWidget(cct_in, i+1, 0)
+            self.color_layout.addWidget(col_in, i+1, 1)
+            self.color_inputs.append((cct_in, col_in))
+
+        self.add_color_btn = QPushButton("+ Add Color Mapping")
+        self.add_color_btn.clicked.connect(self.add_color_row)
+
+        self.config_vbox.addWidget(self.config_group)
+        self.config_vbox.addWidget(self.color_group)
+        self.config_vbox.addWidget(self.add_color_btn)
+        self.config_vbox.addStretch()
+
         # Track which line edit is focused
         self.focused_line_edit = None
         for le in [self.cct_range_input, self.cr_cell, self.cg_cell, self.cb_cell,
                    self.cc_cell, self.cwb_cell, self.lux_range_input, self.reported_range_input]:
             le.installEventFilter(self)
 
-        self.data_layout.addWidget(self.config_group)
+        self.data_layout.addWidget(self.config_scroll)
 
         # Right Panel: Table View
         self.table_widget = QTableWidget()
@@ -109,7 +137,6 @@ class MainWindow(QMainWindow):
         self.plot_layout = QVBoxLayout(self.plot_tab)
         self.tabs.addTab(self.plot_tab, "Plot View (圖表)")
 
-        # Ensure width=14, height=12 as in original script
         self.canvas = PlotCanvas(self.plot_tab, width=14, height=12)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -120,6 +147,14 @@ class MainWindow(QMainWindow):
         self.wb = None
         self.file_path = None
 
+    def add_color_row(self):
+        row = len(self.color_inputs) + 1
+        cct_in = QLineEdit()
+        col_in = QLineEdit("#808080")
+        self.color_layout.addWidget(cct_in, row, 0)
+        self.color_layout.addWidget(col_in, row, 1)
+        self.color_inputs.append((cct_in, col_in))
+
     def eventFilter(self, obj, event):
         if event.type() == QEvent.FocusIn:
             if isinstance(obj, SelectableLineEdit):
@@ -129,7 +164,6 @@ class MainWindow(QMainWindow):
     def set_focused_line_edit(self, le):
         if self.focused_line_edit:
             self.focused_line_edit.setStyleSheet("")
-
         self.focused_line_edit = le
         if self.focused_line_edit:
             self.focused_line_edit.setStyleSheet("background-color: #e6f3ff; border: 2px solid #0078d7;")
@@ -201,11 +235,15 @@ class MainWindow(QMainWindow):
         pattern_len = len(pattern)
         cct_list = [pattern[i % len(pattern)] for i in range(data_len)]
 
-        color_map = {
-            3000: "#FF0000",   # Red
-            4000: "#0066FF",   # Blue
-            4150: "#00AA00",   # Green
-        }
+        # Build color map from UI
+        color_map = {}
+        for cct_in, col_in in self.color_inputs:
+            try:
+                cct_val = int(cct_in.text())
+                color_map[cct_val] = col_in.text()
+            except ValueError:
+                continue
+
         color_list = [color_map.get(cct, "#808080") for cct in cct_list]
         return cct_list, color_list, pattern_len
 
@@ -256,23 +294,12 @@ class MainWindow(QMainWindow):
         max_val = max(x.max(), y.max()) * 1.1 if not df.empty else 100
         x_line = np.linspace(0, max_val, 200)
 
-        # Scatter
         for cct, group in df.groupby("CCT"):
-            ax.scatter(
-                group["CL-200A Lux"],
-                group["Reported_LUX"],
-                color=group["Color"].iloc[0],
-                s=5,
-                alpha=0.85,
-                label=f"{cct}K"
-            )
+            ax.scatter(group["CL-200A Lux"], group["Reported_LUX"],
+                       color=group["Color"].iloc[0], s=5, alpha=0.85, label=f"{cct}K")
 
-        # Ideal Line
         ax.plot(x_line, x_line, "k--", linewidth=1.2, label="Ideal")
-
-        # ±10%
         ax.fill_between(x_line, 0.9 * x_line, 1.1 * x_line, color="gray", alpha=0.2, label="±10%")
-
         ax.set_xlabel("Reference Lux (CL-200A)")
         ax.set_ylabel("Reported Lux")
         ax.set_title(f"{sheet_name}\n{file_name}", fontsize=10)
@@ -286,13 +313,8 @@ class MainWindow(QMainWindow):
             f"Cc: {coeff_dict['Cc']:.3f}\n"
             f"Cwb: {coeff_dict['Cwb']:.3f}"
         )
-        ax.text(
-            0.03, 0.95, coeff_text,
-            transform=ax.transAxes,
-            fontsize=8,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85),
-            verticalalignment="top"
-        )
+        ax.text(0.03, 0.95, coeff_text, transform=ax.transAxes, fontsize=8,
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.85), verticalalignment="top")
 
     def run_process(self):
         if not self.wb:
@@ -302,9 +324,7 @@ class MainWindow(QMainWindow):
         sheets = ["Negroni (red)", "Pine (green)", "Haze midnight (black)", "Silver"]
         file_name = os.path.basename(self.file_path)
 
-        # Reset and recreate subplots exactly as in original script
         self.canvas.fig.clf()
-        # figsize is maintained from __init__ (14x12)
         self.canvas.axes = self.canvas.fig.subplots(2, 2)
         axes = self.canvas.axes.flatten()
 
@@ -319,14 +339,11 @@ class MainWindow(QMainWindow):
             coeff_dict, df = self.extract_sheet_data(ws)
             self.plot_lux_accuracy_on_ax(ax, df, sheet, file_name, coeff_dict)
 
-        # Fig title as in original script
         self.canvas.fig.suptitle(self.subtitle_input.text(), fontsize=16)
-
-        # Tight layout rect as in original script
         self.canvas.fig.tight_layout(rect=[0, 0, 1, 0.96])
         self.canvas.draw()
 
-        # Save file with 300 DPI as in original script
+        # Save file
         os.makedirs("output_file", exist_ok=True)
         out_path = os.path.join("output_file", "lux_accuracy_for_all.png")
         self.canvas.fig.savefig(out_path, dpi=300, bbox_inches="tight")
