@@ -4,9 +4,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
     QLineEdit, QLabel, QFileDialog, QFormLayout, QGroupBox,
-    QScrollArea, QMessageBox, QGridLayout
+    QScrollArea, QMessageBox, QGridLayout, QColorDialog
 )
 from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QColor
 from openpyxl.cell.cell import Cell
 import pandas as pd
 import numpy as np
@@ -27,6 +28,29 @@ def get_excel_column_name(n):
 class SelectableLineEdit(QLineEdit):
     def __init__(self, contents="", parent=None):
         super().__init__(contents, parent)
+
+class ColorLineEdit(QLineEdit):
+    def __init__(self, color_hex="#808080", parent=None):
+        super().__init__(color_hex, parent)
+        self.setReadOnly(True) # Make it read-only to force dialog usage
+        self.setCursor(Qt.PointingHandCursor)
+        self.update_style(color_hex)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            color = QColorDialog.getColor(QColor(self.text()), self, "Select Color")
+            if color.isValid():
+                hex_color = color.name().upper()
+                self.setText(hex_color)
+                self.update_style(hex_color)
+        super().mousePressEvent(event)
+
+    def update_style(self, hex_color):
+        # Calculate luminance to decide text color (black or white)
+        color = QColor(hex_color)
+        lum = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+        text_color = "black" if lum > 128 else "white"
+        self.setStyleSheet(f"background-color: {hex_color}; color: {text_color}; border: 1px solid gray; font-weight: bold;")
 
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, width=14, height=12, dpi=100):
@@ -100,13 +124,13 @@ class MainWindow(QMainWindow):
         self.color_group = QGroupBox("CCT Color Settings (顏色設定)")
         self.color_layout = QGridLayout(self.color_group)
         self.color_layout.addWidget(QLabel("CCT (K)"), 0, 0)
-        self.color_layout.addWidget(QLabel("Color (Hex)"), 0, 1)
+        self.color_layout.addWidget(QLabel("Pick Color (點擊設定)"), 0, 1)
 
         self.color_inputs = []
         default_colors = [("3000", "#FF0000"), ("4000", "#0066FF"), ("4150", "#00AA00")]
         for i, (cct, color) in enumerate(default_colors):
             cct_in = QLineEdit(cct)
-            col_in = QLineEdit(color)
+            col_in = ColorLineEdit(color)
             self.color_layout.addWidget(cct_in, i+1, 0)
             self.color_layout.addWidget(col_in, i+1, 1)
             self.color_inputs.append((cct_in, col_in))
@@ -150,7 +174,7 @@ class MainWindow(QMainWindow):
     def add_color_row(self):
         row = len(self.color_inputs) + 1
         cct_in = QLineEdit()
-        col_in = QLineEdit("#808080")
+        col_in = ColorLineEdit("#808080")
         self.color_layout.addWidget(cct_in, row, 0)
         self.color_layout.addWidget(col_in, row, 1)
         self.color_inputs.append((cct_in, col_in))
@@ -235,7 +259,6 @@ class MainWindow(QMainWindow):
         pattern_len = len(pattern)
         cct_list = [pattern[i % len(pattern)] for i in range(data_len)]
 
-        # Build color map from UI
         color_map = {}
         for cct_in, col_in in self.color_inputs:
             try:
