@@ -3,6 +3,7 @@ import os
 import shutil
 import pandas as pd
 import numpy as np
+import ast
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
@@ -68,15 +69,13 @@ class ALS_CoefficientApp(QMainWindow):
         self.config_layout.addRow("SAMPLE_TIME:", self.sample_time_input)
         self.config_layout.addRow("SAMPLES:", self.samples_input)
 
-        # Target Displays
-        self.detected_ccts_label = QLabel("None")
-        self.detected_ccts_label.setWordWrap(True)
-        self.config_layout.addRow("Detected CCTs:", self.detected_ccts_label)
+        # Target Displays (Now Editable QLineEdit & QTextEdit to allow modification!)
+        self.detected_ccts_input = QLineEdit()
+        self.config_layout.addRow("Detected CCTs (可編輯):", self.detected_ccts_input)
 
-        self.detected_lux_label = QTextEdit()
-        self.detected_lux_label.setReadOnly(True)
-        self.detected_lux_label.setFixedHeight(150)
-        self.config_layout.addRow("Detected LUX Map:", self.detected_lux_label)
+        self.detected_lux_input = QTextEdit()
+        self.detected_lux_input.setFixedHeight(150)
+        self.config_layout.addRow("Detected LUX Map (可編輯):", self.detected_lux_input)
 
         # Mode Indicator
         self.mode_label = QLabel()
@@ -106,6 +105,15 @@ class ALS_CoefficientApp(QMainWindow):
         self.combined_df = None
         self.target_ccts = []
         self.target_lux_map = {}
+
+        # Keep track of detected columns
+        self.cct_col_name = None
+        self.lux_col_name = None
+        self.red_col_name = None
+        self.green_col_name = None
+        self.blue_col_name = None
+        self.clear_col_name = None
+        self.wb_col_name = None
 
     def load_files(self):
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -146,40 +154,64 @@ class ALS_CoefficientApp(QMainWindow):
                 self.table_widget.setItem(i, j, QTableWidgetItem(val))
 
     def auto_calculate_targets(self, df):
-        # Standardize column casing
-        df.columns = [c.strip().upper() for c in df.columns]
+        # Normalise columns to search
+        original_cols = list(df.columns)
+        norm_cols = [c.strip().upper() for c in original_cols]
 
-        cct_col = None
-        lux_col = None
+        self.cct_col_name = None
+        self.lux_col_name = None
+        self.red_col_name = None
+        self.green_col_name = None
+        self.blue_col_name = None
+        self.clear_col_name = None
+        self.wb_col_name = None
 
-        for col in df.columns:
+        for idx, col in enumerate(norm_cols):
             if "CCT" in col:
-                cct_col = col
+                self.cct_col_name = original_cols[idx]
             if "LUX" in col:
-                lux_col = col
+                self.lux_col_name = original_cols[idx]
+            if col == "RED":
+                self.red_col_name = original_cols[idx]
+            if col == "GREEN":
+                self.green_col_name = original_cols[idx]
+            if col == "BLUE":
+                self.blue_col_name = original_cols[idx]
+            if col == "CLEAR":
+                self.clear_col_name = original_cols[idx]
+            if col == "WB":
+                self.wb_col_name = original_cols[idx]
 
-        if not cct_col or not lux_col:
-            self.detected_ccts_label.setText("CCT or LUX columns not found!")
-            self.detected_lux_label.setPlainText("")
+        if not self.cct_col_name or not self.lux_col_name:
+            self.detected_ccts_input.setText("CCT or LUX columns not found!")
+            self.detected_lux_input.setPlainText("")
             return
 
-        # Extract unique CCTs
-        self.target_ccts = sorted(df[cct_col].dropna().unique().tolist())
-        self.detected_ccts_label.setText(", ".join(map(str, self.target_ccts)))
+        # Extract CCTs and LUX Map from the loaded excel file (New columns prioritizing)
+        self.target_ccts = sorted([int(x) for x in df[self.cct_col_name].dropna().unique() if pd.notna(x)])
+        self.detected_ccts_input.setText(str(self.target_ccts))
 
-        # Build TARGET_LUX_MAP
         self.target_lux_map = {}
-        lux_map_text = ""
         for cct in self.target_ccts:
-            lux_vals = sorted(df[df[cct_col] == cct][lux_col].dropna().unique().tolist())
-            self.target_lux_map[cct] = lux_vals
-            lux_map_text += f"{cct}K: {lux_vals}\n"
+            lux_vals = sorted([float(x) for x in df[df[self.cct_col_name] == cct][self.lux_col_name].dropna().unique() if pd.notna(x)])
+            self.target_lux_map[int(cct)] = lux_vals
 
-        self.detected_lux_label.setPlainText(lux_map_text)
+        # Format map dynamically for the text editor
+        self.detected_lux_input.setPlainText(str(self.target_lux_map))
 
     def run_calibration(self):
         if not self.loaded_files or self.combined_df is None:
             QMessageBox.warning(self, "Warning", "Please load data files first.")
+            return
+
+        # Parse active parameters directly from editable UI boxes (allowing users to edit/verify)
+        try:
+            self.target_ccts = ast.literal_eval(self.detected_ccts_input.text())
+            self.target_lux_map = ast.literal_eval(self.detected_lux_input.toPlainText())
+            # Convert keys to int just in case
+            self.target_lux_map = {int(k): [float(x) for x in v] for k, v in self.target_lux_map.items()}
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to parse CCT/LUX Map from inputs: {e}\nFormat should be list/dict, e.g. [3000, 4000] and {{3000: [10, 50]}}")
             return
 
         try:
@@ -192,6 +224,9 @@ class ALS_CoefficientApp(QMainWindow):
 
         self.console_output.clear()
         self.console_output.append("***** Running calibration pipeline... *****")
+
+        # Ensure output directory exists
+        os.makedirs("output_file", exist_ok=True)
 
         # -----------------------------------------------------
         # OPTION 1: Execute using the codebase's official modules
@@ -211,13 +246,13 @@ class ALS_CoefficientApp(QMainWindow):
                 raw_data_processor.RAW_DATA_FILES = raw_files_list
 
                 scaled_dfs = pd.DataFrame()
+                reduction_dfs = pd.DataFrame()
                 for raw_file in raw_data_processor.RAW_DATA_FILES:
                     raw_data_df = raw_data_processor.extract_raw_data_df(raw_file)
                     if raw_data_df is None:
                         continue
                     has_exposure_info = raw_data_processor.has_exposure_info(raw_data_df)
 
-                    # Call standard codebase feature-building process
                     all_machine_dfs = []
                     if has_exposure_info:
                         RAW_DATA_DF_COLS = columns.RAW_DATA_DF_COLS_EXPOSURE
@@ -232,6 +267,12 @@ class ALS_CoefficientApp(QMainWindow):
                             all_machine_dfs.append(single_machine_df)
 
                     reduction_df = reduction_processor.build_reduction_df(raw_file.file_name, all_machine_dfs, has_exposure_info)
+
+                    if reduction_dfs.empty:
+                        reduction_dfs = reduction_df.copy()
+                    else:
+                        reduction_dfs = pd.concat([reduction_dfs, reduction_df], ignore_index=True)
+
                     scaled_df = normalize_processor.scale_reduction_df(has_exposure_info, reduction_df)
 
                     if scaled_dfs.empty:
@@ -239,8 +280,14 @@ class ALS_CoefficientApp(QMainWindow):
                     else:
                         scaled_dfs = pd.concat([scaled_dfs, scaled_df], ignore_index=True)
 
+                # Output official reduction data file as requested
+                reduction_processor.output_final_reduction_file(reduction_dfs)
+
                 prediction_df = regression_processor.initialize_prediction_df(scaled_dfs)
                 label, prediction_df, coefficients = regression_processor.process_regression_pipeline(scaled_dfs, prediction_df)
+
+                # Output official prediction calibration sheet
+                regression_processor.output_prediction_file(prediction_df)
 
                 # Output calculated coefficients to the console
                 self.console_output.append("\n========================================")
@@ -265,7 +312,6 @@ class ALS_CoefficientApp(QMainWindow):
             self.run_fallback_engine(gain_val, sample_time_val, samples_val)
 
         # Copy loaded files to the output_file directory
-        os.makedirs("output_file", exist_ok=True)
         for path in self.loaded_files:
             dest = os.path.join("output_file", os.path.basename(path))
             try:
@@ -279,12 +325,27 @@ class ALS_CoefficientApp(QMainWindow):
 
     def run_fallback_engine(self, gain, sample_time, samples):
         df = self.combined_df.copy()
-        df.columns = [c.strip().upper() for c in df.columns]
-        required_cols = ["CCT", "LUX", "RED", "GREEN", "BLUE", "CLEAR", "WB"]
-        missing_cols = [c for c in required_cols if c not in df.columns]
 
-        if missing_cols:
-            self.console_output.append(f"Error: Missing required columns: {', '.join(missing_cols)}")
+        # Robustly resolve column names dynamically from the loaded dataset
+        original_cols = list(df.columns)
+        norm_cols = [c.strip().upper() for c in original_cols]
+
+        def find_col_by_norm(sub):
+            for idx, c in enumerate(norm_cols):
+                if sub in c:
+                    return original_cols[idx]
+            raise ValueError(f"Required column pattern '{sub}' not found in loaded sheet.")
+
+        try:
+            cct_col = find_col_by_norm("CCT")
+            lux_col = find_col_by_norm("LUX")
+            red_col = find_col_by_norm("RED")
+            green_col = find_col_by_norm("GREEN")
+            blue_col = find_col_by_norm("BLUE")
+            clear_col = find_col_by_norm("CLEAR")
+            wb_col = find_col_by_norm("WB")
+        except ValueError as e:
+            self.console_output.append(f"Error: {e}")
             return
 
         tint = ((sample_time + 1) * (samples + 1)) / 720
@@ -292,8 +353,8 @@ class ALS_CoefficientApp(QMainWindow):
 
         filtered_rows = []
         for index, row in df.iterrows():
-            cct = row["CCT"]
-            lux = row["LUX"]
+            cct = row[cct_col]
+            lux = row[lux_col]
             if cct in self.target_lux_map:
                 if any(np.isclose(lux, target_lux) for target_lux in self.target_lux_map[cct]):
                     filtered_rows.append(row)
@@ -308,11 +369,12 @@ class ALS_CoefficientApp(QMainWindow):
         scale = (tint * gain) / 256.0
         self.console_output.append(f"Normalisation scale factor: {scale:.4f}")
 
-        for ch in ["RED", "GREEN", "BLUE", "CLEAR", "WB"]:
+        # Normalise channels
+        for ch in [red_col, green_col, blue_col, clear_col, wb_col]:
             f_df[ch] = f_df[ch] / scale
 
-        Y = f_df["LUX"].values
-        X = f_df[["RED", "GREEN", "BLUE", "CLEAR", "WB"]].values
+        Y = f_df[lux_col].values
+        X = f_df[[red_col, green_col, blue_col, clear_col, wb_col]].values
         weights = np.where(Y > 0, 1.0 / Y, 1.0)
         W = np.diag(weights)
 
