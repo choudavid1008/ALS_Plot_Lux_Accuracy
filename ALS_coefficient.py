@@ -291,8 +291,17 @@ class ALS_CoefficientApp(QMainWindow):
 
                 # Configure official processor filenames with "output_file" directory prefix
                 # to make sure they are written directly to "output_file" directory
-                reduction_processor.FINAL_REDUCTION_DATA_FILE = os.path.join("output_file", "ALS_ReductionData.csv")
-                regression_processor.PREDICTION_DATA_FILE = os.path.join("output_file", "PredictionData.xlsx")
+                try:
+                    import common.file_path as codebase_file_path
+                    if hasattr(codebase_file_path, "OUTPUT_FILE_PATH") and "output_file" in str(codebase_file_path.OUTPUT_FILE_PATH).replace("\\", "/"):
+                        reduction_processor.FINAL_REDUCTION_DATA_FILE = "ALS_ReductionData.csv"
+                        regression_processor.PREDICTION_DATA_FILE = "PredictionData.xlsx"
+                    else:
+                        reduction_processor.FINAL_REDUCTION_DATA_FILE = os.path.join("output_file", "ALS_ReductionData.csv")
+                        regression_processor.PREDICTION_DATA_FILE = os.path.join("output_file", "PredictionData.xlsx")
+                except Exception:
+                    reduction_processor.FINAL_REDUCTION_DATA_FILE = os.path.join("output_file", "ALS_ReductionData.csv")
+                    regression_processor.PREDICTION_DATA_FILE = os.path.join("output_file", "PredictionData.xlsx")
 
                 raw_files_list = []
                 for path in self.loaded_files:
@@ -465,8 +474,8 @@ class ALS_CoefficientApp(QMainWindow):
                 f_df.to_csv(machine_file_path, index=False)
                 self.console_output.append(f"Generated standalone machine file: {machine_file_path}")
 
-        # Data Reduction: Group by CCT and LUX and take the median
-        f_df = f_df.groupby([cct_col, lux_col], as_index=False).median()
+        # Data Reduction: Group by CCT and LUX and take the median (numeric_only=True to prevent str column type errors)
+        f_df = f_df.groupby([cct_col, lux_col], as_index=False).median(numeric_only=True)
         self.console_output.append(f"After Data Reduction (Median): {len(f_df)} representative rows.")
 
         scale = (tint * gain) / 256.0
