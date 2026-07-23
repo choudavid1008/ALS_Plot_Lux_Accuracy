@@ -29,7 +29,7 @@ class ALS_CoefficientApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ALS Coefficient Calibration Tool")
-        self.resize(1200, 800)
+        self.resize(1200, 850)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -55,10 +55,17 @@ class ALS_CoefficientApp(QMainWindow):
         self.data_layout = QHBoxLayout(self.data_tab)
         self.tabs.addTab(self.data_tab, "Data & Configuration (資料與設定)")
 
-        # Left Column: Configuration
-        self.config_group = QGroupBox("Calibration Configuration")
+        # Left Column: Scrollable Configuration Container
+        self.scroll_config = QScrollArea()
+        self.scroll_config.setWidgetResizable(True)
+        self.scroll_config.setFixedWidth(380)
+        self.config_widget = QWidget()
+        self.config_vbox = QVBoxLayout(self.config_widget)
+        self.scroll_config.setWidget(self.config_widget)
+
+        # Form Layout inside Config Group
+        self.config_group = QGroupBox("Calibration Settings")
         self.config_layout = QFormLayout(self.config_group)
-        self.config_group.setFixedWidth(350)
 
         self.gain_input = QLineEdit("256")
         self.sample_time_input = QLineEdit("500")
@@ -68,23 +75,26 @@ class ALS_CoefficientApp(QMainWindow):
         self.config_layout.addRow("SAMPLE_TIME:", self.sample_time_input)
         self.config_layout.addRow("SAMPLES:", self.samples_input)
 
-        # Target Displays (Now Editable QLineEdit & QTextEdit using strict python-style layout)
+        # Target Displays (Now Clean Comma-Separated CCT QLineEdit)
         self.detected_ccts_input = QLineEdit()
         self.config_layout.addRow("Detected CCTs (可編輯):", self.detected_ccts_input)
+        self.config_vbox.addWidget(self.config_group)
 
-        self.detected_lux_input = QTextEdit()
-        self.detected_lux_input.setFixedHeight(220)
-        self.config_layout.addRow("Detected LUX Map (可編輯):", self.detected_lux_input)
+        # Dedicated, dynamically-updating GroupBox for LUX rows
+        self.lux_map_group = QGroupBox("Detected LUX Map Settings")
+        self.lux_map_layout = QFormLayout(self.lux_map_group)
+        self.config_vbox.addWidget(self.lux_map_group)
 
-        # Mode Indicator
+        # Mode Indicator & Stretch
         self.mode_label = QLabel()
         if OFFICIAL_PIPELINE_AVAILABLE:
             self.mode_label.setText("Pipeline: <font color='green'><b>Official Modules</b></font>")
         else:
             self.mode_label.setText("Pipeline: <font color='orange'><b>Fallback Adaptive Engine</b></font>")
-        self.config_layout.addRow("Mode:", self.mode_label)
+        self.config_vbox.addWidget(self.mode_label)
+        self.config_vbox.addStretch()
 
-        self.data_layout.addWidget(self.config_group)
+        self.data_layout.addWidget(self.scroll_config)
 
         # Right Column: Loaded Data Table View
         self.table_widget = QTableWidget()
@@ -103,7 +113,7 @@ class ALS_CoefficientApp(QMainWindow):
         self.loaded_files = []
         self.combined_df = None
         self.target_ccts = []
-        self.target_lux_map = {}
+        self.lux_input_fields = {} # dict mapping index -> QLineEdit field
 
         # Keep track of detected columns
         self.cct_col_name = None
@@ -153,7 +163,6 @@ class ALS_CoefficientApp(QMainWindow):
                 self.table_widget.setItem(i, j, QTableWidgetItem(val))
 
     def auto_calculate_targets(self, df):
-        # Strict exact-match columns scan (Case-insensitive, stripped of spaces)
         original_cols = list(df.columns)
         norm_cols = [c.strip().upper() for c in original_cols]
 
@@ -183,59 +192,61 @@ class ALS_CoefficientApp(QMainWindow):
 
         if not self.cct_col_name or not self.lux_col_name:
             self.detected_ccts_input.setText("CCT or LUX columns not found!")
-            self.detected_lux_input.setPlainText("")
+            # Clear layout
+            while self.lux_map_layout.count() > 0:
+                child = self.lux_map_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
             return
 
-        # Extract CCTs and LUX Map strictly matching both CCT and LUX values
+        # Extract unique CCTs (comma-separated display, e.g. 2300, 2800, 6500)
         self.target_ccts = sorted([int(x) for x in df[self.cct_col_name].dropna().unique() if pd.notna(x)])
+        self.detected_ccts_input.setText(", ".join(map(str, self.target_ccts)))
 
-        # Format CCTs in the exact Python-style requested: TARGET_CCTS = [2300, 2800, 6500]
-        ccts_str = f"TARGET_CCTS = {str(self.target_ccts)}"
-        self.detected_ccts_input.setText(ccts_str)
+        # Clear existing dynamic LUX Map Rows
+        while self.lux_map_layout.count() > 0:
+            child = self.lux_map_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
-        self.target_lux_map = {}
-        for cct in self.target_ccts:
-            # Enforce strict pairing: rows must have valid, paired values for both CCT and LUX
-            lux_vals = sorted([float(x) for x in df[(df[self.cct_col_name] == cct) & (df[self.lux_col_name].notna())][self.lux_col_name].unique()])
-            self.target_lux_map[int(cct)] = lux_vals
+        self.lux_input_fields = {}
 
-        # Format map strictly matching Python code assignment layout:
-        # TARGET_LUX_MAP = {TARGET_CCTS[0]: [15.87, 48.1, 81.6, 362], ...}
-        lux_map_text = "TARGET_LUX_MAP = {\n"
+        # Rebuild dedicated rows for each CCT (labeled TARGET_CCTS[idx] / e.g. TARGET_CCTS[0] -> 2300)
         for idx, cct in enumerate(self.target_ccts):
-            vals = self.target_lux_map[cct]
-            # Format float values nicely
-            vals_str = "[" + ", ".join(map(str, vals)) + "]"
-            lux_map_text += f"    TARGET_CCTS[{idx}]: {vals_str},\n"
-        lux_map_text = lux_map_text.rstrip(",\n") + "\n}"
+            lux_vals = sorted([float(x) for x in df[(df[self.cct_col_name] == cct) & (df[self.lux_col_name].notna())][self.lux_col_name].unique()])
 
-        self.detected_lux_input.setPlainText(lux_map_text)
+            # Format nicely as a clean comma-separated list of numbers
+            lux_str = ", ".join(map(str, lux_vals))
+
+            lux_field = QLineEdit(lux_str)
+            label_text = f"TARGET_CCTS[{idx}] ({cct}K):"
+            self.lux_map_layout.addRow(label_text, lux_field)
+
+            # Store references
+            self.lux_input_fields[idx] = (cct, lux_field)
 
     def run_calibration(self):
         if not self.loaded_files or self.combined_df is None:
             QMessageBox.warning(self, "Warning", "Please load data files first.")
             return
 
-        # Safely parse python assignment code directly from the UI inputs using exec/eval context
-        ccts_text = self.detected_ccts_input.text()
-        lux_map_text = self.detected_lux_input.toPlainText()
-
-        local_env = {}
+        # Dynamically retrieve custom user edits from each CCT and row LUX input field
         try:
-            # Execute CCT list assignment
-            exec(ccts_text, {}, local_env)
-            self.target_ccts = local_env.get("TARGET_CCTS", [])
+            # Parse CCTs
+            cct_text = self.detected_ccts_input.text()
+            self.target_ccts = sorted([int(x.strip()) for x in cct_text.split(",") if x.strip()])
 
-            # Execute LUX map assignment
-            exec(lux_map_text, {"TARGET_CCTS": self.target_ccts}, local_env)
-            raw_lux_map = local_env.get("TARGET_LUX_MAP", {})
-
-            # Resolve numeric mapping key values
+            # Parse target LUX mappings for each dynamic row
             self.target_lux_map = {}
-            for k, v in raw_lux_map.items():
-                self.target_lux_map[int(k)] = [float(x) for x in v]
+            for idx, (original_cct, lux_field) in self.lux_input_fields.items():
+                # Enforce that modified row indexes match the active list of parsed CCTs
+                if idx < len(self.target_ccts):
+                    cct_key = self.target_ccts[idx]
+                    lux_text = lux_field.text()
+                    lux_vals = sorted([float(x.strip()) for x in lux_text.split(",") if x.strip()])
+                    self.target_lux_map[cct_key] = lux_vals
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to execute CCT/LUX code structure from inputs: {e}\nFormat must be exact Python assignments.")
+            QMessageBox.critical(self, "Error", f"Failed to parse target variables from inputs: {e}\nCCT and Lux values should be numbers separated by commas.")
             return
 
         try:
@@ -258,6 +269,7 @@ class ALS_CoefficientApp(QMainWindow):
         if OFFICIAL_PIPELINE_AVAILABLE:
             self.console_output.append("Running with OFFICIAL Codebase Processor modules...")
             try:
+                # Set dynamic parameters to official processor globals
                 normalize_processor.GAIN = gain_val
                 normalize_processor.TINT = ((sample_time_val + 1) * (samples_val + 1)) / 720
                 reduction_processor.TARGET_CCTS = self.target_ccts
@@ -303,13 +315,16 @@ class ALS_CoefficientApp(QMainWindow):
                     else:
                         scaled_dfs = pd.concat([scaled_dfs, scaled_df], ignore_index=True)
 
+                # Output official reduction data file as requested
                 reduction_processor.output_final_reduction_file(reduction_dfs)
 
                 prediction_df = regression_processor.initialize_prediction_df(scaled_dfs)
                 label, prediction_df, coefficients = regression_processor.process_regression_pipeline(scaled_dfs, prediction_df)
 
+                # Output official prediction calibration sheet
                 regression_processor.output_prediction_file(prediction_df)
 
+                # Output calculated coefficients to the console
                 self.console_output.append("\n========================================")
                 self.console_output.append(f"Official Target: {label}")
                 self.console_output.append("Calculated Coefficients:")
@@ -370,7 +385,7 @@ class ALS_CoefficientApp(QMainWindow):
         tint = ((sample_time + 1) * (samples + 1)) / 720
         self.console_output.append(f"Calculated TINT: {tint:.4f}")
 
-        # Both columns are evaluated strictly
+        # Enforce strictly evaluated matching
         filtered_rows = []
         for index, row in df.iterrows():
             cct = row[cct_col]
