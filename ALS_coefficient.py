@@ -262,7 +262,9 @@ class ALS_CoefficientApp(QMainWindow):
         for path in self.loaded_files:
             dest_input = os.path.join("input_file", os.path.basename(path))
             try:
-                shutil.copy(path, dest_input)
+                # Resolve same file copy error
+                if os.path.abspath(path) != os.path.abspath(dest_input):
+                    shutil.copy(path, dest_input)
             except Exception as e:
                 print(f"Failed to copy to input_file: {e}")
 
@@ -414,11 +416,23 @@ class ALS_CoefficientApp(QMainWindow):
         try:
             cct_col = find_exact_col("CCT")
             lux_col = find_exact_col("LUX")
-            red_col = find_exact_col("RED")
-            green_col = find_exact_col("GREEN")
-            blue_col = find_exact_col("BLUE")
-            clear_col = find_exact_col("CLEAR")
-            wb_col = find_exact_col("WB")
+        except ValueError as e:
+            self.console_output.append(f"Error: {e}")
+            return
+
+        # Fallback fields are extracted with a loose/adaptive match to handle different column formats
+        def find_loose_col(sub):
+            for idx, c in enumerate(norm_cols):
+                if sub in c:
+                    return original_cols[idx]
+            raise ValueError(f"Required column '{sub}' not found in loaded sheet.")
+
+        try:
+            red_col = find_loose_col("RED")
+            green_col = find_loose_col("GREEN")
+            blue_col = find_loose_col("BLUE")
+            clear_col = find_loose_col("CLEAR")
+            wb_col = find_loose_col("WB")
         except ValueError as e:
             self.console_output.append(f"Error: {e}")
             return
