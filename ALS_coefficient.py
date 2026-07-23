@@ -3,6 +3,7 @@ import os
 import shutil
 import pandas as pd
 import numpy as np
+import ast
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
@@ -113,6 +114,7 @@ class ALS_CoefficientApp(QMainWindow):
         self.loaded_files = []
         self.combined_df = None
         self.target_ccts = []
+        self.target_lux_map = {}
         self.lux_input_fields = {} # dict mapping index -> QLineEdit field
 
         # Keep track of detected columns
@@ -163,6 +165,7 @@ class ALS_CoefficientApp(QMainWindow):
                 self.table_widget.setItem(i, j, QTableWidgetItem(val))
 
     def auto_calculate_targets(self, df):
+        # Strict exact-match columns scan (Case-insensitive, stripped of spaces)
         original_cols = list(df.columns)
         norm_cols = [c.strip().upper() for c in original_cols]
 
@@ -239,7 +242,6 @@ class ALS_CoefficientApp(QMainWindow):
             # Parse target LUX mappings for each dynamic row
             self.target_lux_map = {}
             for idx, (original_cct, lux_field) in self.lux_input_fields.items():
-                # Enforce that modified row indexes match the active list of parsed CCTs
                 if idx < len(self.target_ccts):
                     cct_key = self.target_ccts[idx]
                     lux_text = lux_field.text()
@@ -260,8 +262,17 @@ class ALS_CoefficientApp(QMainWindow):
         self.console_output.clear()
         self.console_output.append("***** Running calibration pipeline... *****")
 
-        # Ensure output directory exists
+        # Ensure dynamic system folders exist
+        os.makedirs("input_file", exist_ok=True)
         os.makedirs("output_file", exist_ok=True)
+
+        # Copy selected files to input_file directory so codebase modules can resolve them smoothly
+        for path in self.loaded_files:
+            dest_input = os.path.join("input_file", os.path.basename(path))
+            try:
+                shutil.copy(path, dest_input)
+            except Exception as e:
+                print(f"Failed to copy to input_file: {e}")
 
         # -----------------------------------------------------
         # OPTION 1: Execute using the codebase's official modules
@@ -275,17 +286,39 @@ class ALS_CoefficientApp(QMainWindow):
                 reduction_processor.TARGET_CCTS = self.target_ccts
                 reduction_processor.TARGET_LUX_MAP = self.target_lux_map
 
+                reduction_processor.OLD_REDUCTION_DATA_IS_APPEND = False
+                reduction_processor.OLD_REDUCTION_DATA_IS_DEDUPLICATE = False
+                reduction_processor.OLD_REDUCTION_DATA_IS_SORT = True
+
+                baseline_processor.BASELINE_CCT = 0
+                baseline_processor.BASELINE_LUX = 0
+
+                regression_processor.PREDICTION_DATA_FILE = "PredictionData.xlsx"
+
                 raw_files_list = []
                 for path in self.loaded_files:
-                    raw_files_list.append(RawDataFile(file_name=path, header_row=0))
+                    # Provide base filename first as expected by official project structure
+                    filename = os.path.basename(path)
+                    raw_files_list.append(RawDataFile(file_name=filename, header_row=0))
                 raw_data_processor.RAW_DATA_FILES = raw_files_list
 
                 scaled_dfs = pd.DataFrame()
                 reduction_dfs = pd.DataFrame()
                 for raw_file in raw_data_processor.RAW_DATA_FILES:
-                    raw_data_df = raw_data_processor.extract_raw_data_df(raw_file)
+                    raw_data_df = None
+                    try:
+                        raw_data_df = raw_data_processor.extract_raw_data_df(raw_file)
+                    except Exception:
+                        # Try with absolute path if base filename failed
+                        try:
+                            raw_file.file_name = os.path.abspath(os.path.join("input_file", raw_file.file_name))
+                            raw_data_df = raw_data_processor.extract_raw_data_df(raw_file)
+                        except Exception:
+                            pass
+
                     if raw_data_df is None:
                         continue
+
                     has_exposure_info = raw_data_processor.has_exposure_info(raw_data_df)
 
                     all_machine_dfs = []
@@ -315,16 +348,13 @@ class ALS_CoefficientApp(QMainWindow):
                     else:
                         scaled_dfs = pd.concat([scaled_dfs, scaled_df], ignore_index=True)
 
-                # Output official reduction data file as requested
                 reduction_processor.output_final_reduction_file(reduction_dfs)
 
                 prediction_df = regression_processor.initialize_prediction_df(scaled_dfs)
                 label, prediction_df, coefficients = regression_processor.process_regression_pipeline(scaled_dfs, prediction_df)
 
-                # Output official prediction calibration sheet
                 regression_processor.output_prediction_file(prediction_df)
 
-                # Output calculated coefficients to the console
                 self.console_output.append("\n========================================")
                 self.console_output.append(f"Official Target: {label}")
                 self.console_output.append("Calculated Coefficients:")
@@ -399,7 +429,12 @@ class ALS_CoefficientApp(QMainWindow):
             return
 
         f_df = pd.DataFrame(filtered_rows)
-        self.console_output.append(f"Processing {len(f_df)} matching data rows.")
+        self.console_output.append(f"Found {len(f_df)} matching raw measurement rows.")
+
+        # Data Reduction: Group by CCT and LUX and take the median
+        # to ensure each CCT and LUX combination has exactly one representative row
+        f_df = f_df.groupby([cct_col, lux_col], as_index=False).median()
+        self.console_output.append(f"After Data Reduction (Median): {len(f_df)} representative rows.")
 
         scale = (tint * gain) / 256.0
         self.console_output.append(f"Normalisation scale factor: {scale:.4f}")
