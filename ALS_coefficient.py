@@ -286,6 +286,9 @@ class ALS_CoefficientApp(QMainWindow):
                 reduction_processor.TARGET_CCTS = self.target_ccts
                 reduction_processor.TARGET_LUX_MAP = self.target_lux_map
 
+                # 確保與您提供原本腳本的資料收斂方法與參數完全一致
+                reduction_processor.DATA_REDUCTION_METHOD = "representative"
+                reduction_processor.REGRESSION_TARGET_MACHINES = ["ALL"]
                 reduction_processor.OLD_REDUCTION_DATA_IS_APPEND = False
                 reduction_processor.OLD_REDUCTION_DATA_IS_DEDUPLICATE = False
                 reduction_processor.OLD_REDUCTION_DATA_IS_SORT = True
