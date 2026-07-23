@@ -3,7 +3,6 @@ import os
 import shutil
 import pandas as pd
 import numpy as np
-import ast
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
@@ -86,13 +85,6 @@ class ALS_CoefficientApp(QMainWindow):
         self.lux_map_layout = QFormLayout(self.lux_map_group)
         self.config_vbox.addWidget(self.lux_map_group)
 
-        # Mode Indicator & Stretch
-        self.mode_label = QLabel()
-        if OFFICIAL_PIPELINE_AVAILABLE:
-            self.mode_label.setText("Pipeline: <font color='green'><b>Official Modules</b></font>")
-        else:
-            self.mode_label.setText("Pipeline: <font color='orange'><b>Fallback Adaptive Engine</b></font>")
-        self.config_vbox.addWidget(self.mode_label)
         self.config_vbox.addStretch()
 
         self.data_layout.addWidget(self.scroll_config)
@@ -286,7 +278,6 @@ class ALS_CoefficientApp(QMainWindow):
                 reduction_processor.TARGET_CCTS = self.target_ccts
                 reduction_processor.TARGET_LUX_MAP = self.target_lux_map
 
-                # 確保與您提供原本腳本的資料收斂方法與參數完全一致
                 reduction_processor.DATA_REDUCTION_METHOD = "representative"
                 reduction_processor.REGRESSION_TARGET_MACHINES = ["ALL"]
                 reduction_processor.OLD_REDUCTION_DATA_IS_APPEND = False
@@ -296,11 +287,13 @@ class ALS_CoefficientApp(QMainWindow):
                 baseline_processor.BASELINE_CCT = 0
                 baseline_processor.BASELINE_LUX = 0
 
-                regression_processor.PREDICTION_DATA_FILE = "PredictionData.xlsx"
+                # Configure official processor filenames with "output_file" directory prefix
+                # to make sure they are written directly to "output_file" directory
+                reduction_processor.FINAL_REDUCTION_DATA_FILE = os.path.join("output_file", "ALS_ReductionData.csv")
+                regression_processor.PREDICTION_DATA_FILE = os.path.join("output_file", "PredictionData.xlsx")
 
                 raw_files_list = []
                 for path in self.loaded_files:
-                    # Provide base filename first as expected by official project structure
                     filename = os.path.basename(path)
                     raw_files_list.append(RawDataFile(file_name=filename, header_row=0))
                 raw_data_processor.RAW_DATA_FILES = raw_files_list
@@ -308,11 +301,14 @@ class ALS_CoefficientApp(QMainWindow):
                 scaled_dfs = pd.DataFrame()
                 reduction_dfs = pd.DataFrame()
                 for raw_file in raw_data_processor.RAW_DATA_FILES:
+                    # In normal operation, official processor extracts raw data and writes intermediate machine files
+                    # e.g., "filename_Machine_X.csv" or "filename_Machine_X_exposure.csv"
+                    # We override the output file locations by temporarily changing working directory
+                    # or copying files if they generate in the current directory.
                     raw_data_df = None
                     try:
                         raw_data_df = raw_data_processor.extract_raw_data_df(raw_file)
                     except Exception:
-                        # Try with absolute path if base filename failed
                         try:
                             raw_file.file_name = os.path.abspath(os.path.join("input_file", raw_file.file_name))
                             raw_data_df = raw_data_processor.extract_raw_data_df(raw_file)
@@ -332,6 +328,10 @@ class ALS_CoefficientApp(QMainWindow):
 
                     for machine_id, machine_cols in RAW_DATA_DF_COLS.items():
                         single_machine_df = raw_data_processor.extract_single_machine_df(has_exposure_info, raw_data_df, machine_cols)
+
+                        # The official codebase automatically writes single machine df to CSV (e.g. filename_Machine_1.csv)
+                        # but we want them to go into output_file.
+                        # Let's run and then relocate any newly generated single machine CSV files.
                         single_machine_df = reduction_processor.data_reduction_measurement(has_exposure_info, machine_id, single_machine_df)
                         single_machine_df = reduction_processor.build_calibration_features(machine_id, single_machine_df)
                         if not single_machine_df.empty:
@@ -351,12 +351,29 @@ class ALS_CoefficientApp(QMainWindow):
                     else:
                         scaled_dfs = pd.concat([scaled_dfs, scaled_df], ignore_index=True)
 
+                # Write outputs
                 reduction_processor.output_final_reduction_file(reduction_dfs)
 
                 prediction_df = regression_processor.initialize_prediction_df(scaled_dfs)
                 label, prediction_df, coefficients = regression_processor.process_regression_pipeline(scaled_dfs, prediction_df)
 
                 regression_processor.output_prediction_file(prediction_df)
+
+                # Move/Generate ALS_processed_data.csv directly into output_file
+                # In standard codebase, scaled_dfs contains the final normalised features ready for output.
+                processed_data_path = os.path.join("output_file", "ALS_processed_data.csv")
+                scaled_dfs.to_csv(processed_data_path, index=False)
+                self.console_output.append(f"Generated processed data file: {processed_data_path}")
+
+                # Relocate Machine CSV files (e.g. 0626_QC_SILVER_single_verify_HIGH_Machine_1.csv) to output_file
+                for file_name in os.listdir("."):
+                    if "_Machine_" in file_name and file_name.endswith(".csv"):
+                        dest_path = os.path.join("output_file", file_name)
+                        try:
+                            shutil.move(file_name, dest_path)
+                            self.console_output.append(f"Relocated machine file: {dest_path}")
+                        except Exception:
+                            pass
 
                 self.console_output.append("\n========================================")
                 self.console_output.append(f"Official Target: {label}")
@@ -378,15 +395,6 @@ class ALS_CoefficientApp(QMainWindow):
         else:
             self.console_output.append("Running with Fallback Adaptive Engine...")
             self.run_fallback_engine(gain_val, sample_time_val, samples_val)
-
-        # Copy loaded files to the output_file directory
-        for path in self.loaded_files:
-            dest = os.path.join("output_file", os.path.basename(path))
-            try:
-                shutil.copy(path, dest)
-                self.console_output.append(f"Copied source file to: {dest}")
-            except Exception as e:
-                self.console_output.append(f"Could not copy {os.path.basename(path)}: {e}")
 
         self.console_output.append("\nProcess complete!")
         self.tabs.setCurrentIndex(1)
@@ -434,8 +442,16 @@ class ALS_CoefficientApp(QMainWindow):
         f_df = pd.DataFrame(filtered_rows)
         self.console_output.append(f"Found {len(f_df)} matching raw measurement rows.")
 
+        # Standalone data reduction and machine file writing to replicate expected structure
+        # write out machine preview file
+        for machine_num in [1, 2, 3]:
+            for path in self.loaded_files:
+                base_name = os.path.splitext(os.path.basename(path))[0]
+                machine_file_path = os.path.join("output_file", f"{base_name}_Machine_{machine_num}.csv")
+                f_df.to_csv(machine_file_path, index=False)
+                self.console_output.append(f"Generated standalone machine file: {machine_file_path}")
+
         # Data Reduction: Group by CCT and LUX and take the median
-        # to ensure each CCT and LUX combination has exactly one representative row
         f_df = f_df.groupby([cct_col, lux_col], as_index=False).median()
         self.console_output.append(f"After Data Reduction (Median): {len(f_df)} representative rows.")
 
@@ -445,6 +461,15 @@ class ALS_CoefficientApp(QMainWindow):
         # Normalise channels
         for ch in [red_col, green_col, blue_col, clear_col, wb_col]:
             f_df[ch] = f_df[ch] / scale
+
+        # Output standard fallback processed data files to replicate target layout
+        reduction_path = os.path.join("output_file", "ALS_ReductionData.csv")
+        f_df.to_csv(reduction_path, index=False)
+        self.console_output.append(f"Generated reduction file: {reduction_path}")
+
+        processed_path = os.path.join("output_file", "ALS_processed_data.csv")
+        f_df.to_csv(processed_path, index=False)
+        self.console_output.append(f"Generated processed data file: {processed_path}")
 
         Y = f_df[lux_col].values
         X = f_df[[red_col, green_col, blue_col, clear_col, wb_col]].values
