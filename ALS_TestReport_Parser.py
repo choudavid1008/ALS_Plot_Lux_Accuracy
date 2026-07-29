@@ -175,9 +175,13 @@ class ALS_TestReportParserApp(QMainWindow):
                     clean_val = str(val_c).strip().strip('"').strip("'")
                     dut_versions.add(clean_val)
 
-                # 3. Handle rows from B7 to B732 (0-indexed 6 to 731)
-                elif 6 <= idx <= 731:
-                    if val_b == "" or val_b == "measurement":
+                # 3. Handle rows from B7 onwards (idx >= 6) until Column B is empty
+                elif idx >= 6:
+                    if val_b == "":
+                        # Break out of the row processing loop as soon as Column B is empty
+                        break
+
+                    if val_b == "measurement":
                         continue
 
                     # Discard rows containing "<Sample_Number>"
