@@ -104,31 +104,48 @@ class ALS_TestReportParserApp(QMainWindow):
         total_valid_rows = 0
         data_by_label = {} # label -> list of floats
 
+        import csv
+
         for file_path in all_files:
+            rows_data = []
             try:
                 if file_path.lower().endswith(".csv"):
-                    df = pd.read_csv(file_path, header=None)
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        reader = csv.reader(f)
+                        for r in reader:
+                            if len(r) < 3:
+                                r = r + [""] * (3 - len(r))
+                            rows_data.append(r)
                 else:
                     df = pd.read_excel(file_path, header=None)
+                    for _, row in df.iterrows():
+                        r = []
+                        for col_idx in range(max(3, df.shape[1])):
+                            if col_idx < df.shape[1]:
+                                val = row[col_idx]
+                                r.append(str(val).strip() if pd.notna(val) else "")
+                            else:
+                                r.append("")
+                        rows_data.append(r)
             except Exception as e:
                 print(f"Skipping file {file_path} due to error: {e}")
                 continue
 
-            # Ensure the dataframe has at least 2 columns (0 and 1 represent column A and B, 2 is C)
-            if df.shape[1] < 3:
-                continue
-
-            for idx, row in df.iterrows():
-                val_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-                val_c = row[2] if pd.notna(row[2]) else None
+            for r in rows_data:
+                val_b = str(r[1]).strip()
+                val_c_raw = r[2].strip() if isinstance(r[2], str) else r[2]
+                val_c = val_c_raw if val_c_raw != "" else None
 
                 # 1. Get lens_color_number (typically at B3 -> C3)
                 if val_b == "lens_color_number" and val_c is not None:
-                    lens_colors.add(str(val_c).strip())
+                    # Strip quotes if any
+                    clean_val = str(val_c).strip().strip('"').strip("'")
+                    lens_colors.add(clean_val)
 
                 # 2. Get DUT_VERSION (typically at B4 -> C4)
                 elif val_b == "DUT_VERSION" and val_c is not None:
-                    dut_versions.add(str(val_c).strip())
+                    clean_val = str(val_c).strip().strip('"').strip("'")
+                    dut_versions.add(clean_val)
 
                 # 4. Extract data starting with cl200a_ref_
                 elif val_b.startswith("cl200a_ref_"):
@@ -138,7 +155,9 @@ class ALS_TestReportParserApp(QMainWindow):
 
                     if val_c is not None:
                         try:
-                            num_val = float(val_c)
+                            # Remove potential quotes around number strings
+                            num_str = str(val_c).strip().strip('"').strip("'")
+                            num_val = float(num_str)
                             if val_b not in data_by_label:
                                 data_by_label[val_b] = []
                             data_by_label[val_b].append(num_val)
