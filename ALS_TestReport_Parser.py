@@ -13,7 +13,7 @@ class ALS_TestReportParserApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ALS Test Report Parser")
-        self.resize(900, 650)
+        self.resize(1000, 650)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -74,14 +74,16 @@ class ALS_TestReportParserApp(QMainWindow):
         self.results_layout = QVBoxLayout(self.results_group)
 
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(4)
+        self.results_table.setColumnCount(5)
         self.results_table.setHorizontalHeaderLabels([
+            "Phase (測試階段)",
             "B Column Name (B欄名稱)",
             "Min (最小值)",
             "Max (最大值)",
             "Avg (平均值)"
         ])
-        self.results_table.setColumnWidth(0, 300)
+        self.results_table.setColumnWidth(0, 200)
+        self.results_table.setColumnWidth(1, 300)
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_layout.addWidget(self.results_table)
 
@@ -115,7 +117,11 @@ class ALS_TestReportParserApp(QMainWindow):
         total_valid_rows = 0
         processed_files_count = 0
         b2_header_name = "measurement" # default name
-        data_by_label = {} # label -> list of floats
+
+        # Use a list-based insertion tracker to preserve the original row order,
+        # but map keys of (phase, label) -> list of floats
+        ordered_keys = []
+        data_by_key = {} # (phase, label) -> list of floats
 
         import csv
 
@@ -153,6 +159,7 @@ class ALS_TestReportParserApp(QMainWindow):
                     b2_header_name = extracted_b2
 
             for idx, r in enumerate(rows_data):
+                val_a = str(r[0]).strip()
                 val_b = str(r[1]).strip()
                 val_c_raw = r[2].strip() if isinstance(r[2], str) else r[2]
                 val_c = val_c_raw if val_c_raw != "" else None
@@ -182,9 +189,13 @@ class ALS_TestReportParserApp(QMainWindow):
                             # Remove potential quotes around number strings
                             num_str = str(val_c).strip().strip('"').strip("'")
                             num_val = float(num_str)
-                            if val_b not in data_by_label:
-                                data_by_label[val_b] = []
-                            data_by_label[val_b].append(num_val)
+
+                            key = (val_a, val_b)
+                            if key not in data_by_key:
+                                data_by_key[key] = []
+                                ordered_keys.append(key)
+
+                            data_by_key[key].append(num_val)
                             total_valid_rows += 1
                         except ValueError:
                             pass
@@ -195,8 +206,9 @@ class ALS_TestReportParserApp(QMainWindow):
         self.total_rows_display.setText(str(total_valid_rows))
         self.total_files_display.setText(str(processed_files_count))
 
-        # Dynamically rename column 0 header label using B2 content (measurement)
+        # Dynamically rename column 1 header label using B2 content (measurement)
         self.results_table.setHorizontalHeaderLabels([
+            "Phase (測試階段)",
             f"{b2_header_name} (B欄名稱)",
             "Min (最小值)",
             "Max (最大值)",
@@ -204,16 +216,20 @@ class ALS_TestReportParserApp(QMainWindow):
         ])
 
         # Populate Results Table in insertion order (original CSV sequence)
-        self.results_table.setRowCount(len(data_by_label))
-        for row_idx, (label, vals) in enumerate(data_by_label.items()):
+        self.results_table.setRowCount(len(ordered_keys))
+        for row_idx, key in enumerate(ordered_keys):
+            phase, label = key
+            vals = data_by_key[key]
+
             max_val = max(vals)
             min_val = min(vals)
             avg_val = np.mean(vals)
 
-            self.results_table.setItem(row_idx, 0, QTableWidgetItem(label))
-            self.results_table.setItem(row_idx, 1, QTableWidgetItem(f"{min_val:.4f}"))
-            self.results_table.setItem(row_idx, 2, QTableWidgetItem(f"{max_val:.4f}"))
-            self.results_table.setItem(row_idx, 3, QTableWidgetItem(f"{avg_val:.4f}"))
+            self.results_table.setItem(row_idx, 0, QTableWidgetItem(phase))
+            self.results_table.setItem(row_idx, 1, QTableWidgetItem(label))
+            self.results_table.setItem(row_idx, 2, QTableWidgetItem(f"{min_val:.4f}"))
+            self.results_table.setItem(row_idx, 3, QTableWidgetItem(f"{max_val:.4f}"))
+            self.results_table.setItem(row_idx, 4, QTableWidgetItem(f"{avg_val:.4f}"))
 
         QMessageBox.information(self, "Success", "Parsing completed successfully!")
 
