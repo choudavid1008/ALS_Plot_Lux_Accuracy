@@ -24,6 +24,15 @@ class ALS_TestReportParserApp(QMainWindow):
         self.dir_label = QLabel("Directory (目錄):")
         self.dir_input = QLineEdit()
         self.dir_input.setPlaceholderText("Select target directory...")
+
+        # Default directory check: look for "input_files" directory
+        default_dir = os.path.join(os.getcwd(), "input_files")
+        if os.path.exists(default_dir) and os.path.isdir(default_dir):
+            self.dir_input.setText(default_dir)
+            self.target_dir = default_dir
+        else:
+            self.target_dir = ""
+
         self.dir_btn = QPushButton("Set Directory (設定目錄)")
         self.dir_btn.clicked.connect(self.select_directory)
 
@@ -68,8 +77,8 @@ class ALS_TestReportParserApp(QMainWindow):
         self.results_table.setColumnCount(4)
         self.results_table.setHorizontalHeaderLabels([
             "B Column Name (B欄名稱)",
-            "Max (最大值)",
             "Min (最小值)",
+            "Max (最大值)",
             "Avg (平均值)"
         ])
         self.results_table.setColumnWidth(0, 300)
@@ -77,9 +86,6 @@ class ALS_TestReportParserApp(QMainWindow):
         self.results_layout.addWidget(self.results_table)
 
         self.main_layout.addWidget(self.results_group)
-
-        # State
-        self.target_dir = ""
 
     def select_directory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Test Report Directory")
@@ -192,21 +198,21 @@ class ALS_TestReportParserApp(QMainWindow):
         # Dynamically rename column 0 header label using B2 content (measurement)
         self.results_table.setHorizontalHeaderLabels([
             f"{b2_header_name} (B欄名稱)",
-            "Max (最大值)",
             "Min (最小值)",
+            "Max (最大值)",
             "Avg (平均值)"
         ])
 
-        # Populate Results Table
+        # Populate Results Table in insertion order (original CSV sequence)
         self.results_table.setRowCount(len(data_by_label))
-        for row_idx, (label, vals) in enumerate(sorted(data_by_label.items())):
+        for row_idx, (label, vals) in enumerate(data_by_label.items()):
             max_val = max(vals)
             min_val = min(vals)
             avg_val = np.mean(vals)
 
             self.results_table.setItem(row_idx, 0, QTableWidgetItem(label))
-            self.results_table.setItem(row_idx, 1, QTableWidgetItem(f"{max_val:.4f}"))
-            self.results_table.setItem(row_idx, 2, QTableWidgetItem(f"{min_val:.4f}"))
+            self.results_table.setItem(row_idx, 1, QTableWidgetItem(f"{min_val:.4f}"))
+            self.results_table.setItem(row_idx, 2, QTableWidgetItem(f"{max_val:.4f}"))
             self.results_table.setItem(row_idx, 3, QTableWidgetItem(f"{avg_val:.4f}"))
 
         QMessageBox.information(self, "Success", "Parsing completed successfully!")
