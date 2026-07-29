@@ -131,7 +131,7 @@ class ALS_TestReportParserApp(QMainWindow):
                 print(f"Skipping file {file_path} due to error: {e}")
                 continue
 
-            for r in rows_data:
+            for idx, r in enumerate(rows_data):
                 val_b = str(r[1]).strip()
                 val_c_raw = r[2].strip() if isinstance(r[2], str) else r[2]
                 val_c = val_c_raw if val_c_raw != "" else None
@@ -147,9 +147,12 @@ class ALS_TestReportParserApp(QMainWindow):
                     clean_val = str(val_c).strip().strip('"').strip("'")
                     dut_versions.add(clean_val)
 
-                # 4. Extract data starting with cl200a_ref_
-                elif val_b.startswith("cl200a_ref_"):
-                    # 6. Discard rows containing "<Sample_Number>"
+                # 3. Handle rows from B7 to B732 (0-indexed 6 to 731)
+                elif 6 <= idx <= 731:
+                    if val_b == "" or val_b == "measurement":
+                        continue
+
+                    # Discard rows containing "<Sample_Number>"
                     if "<Sample_Number>" in val_b:
                         continue
 
