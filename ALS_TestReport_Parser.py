@@ -45,9 +45,13 @@ class ALS_TestReportParserApp(QMainWindow):
         self.total_rows_display = QLineEdit()
         self.total_rows_display.setReadOnly(True)
 
+        self.total_files_display = QLineEdit()
+        self.total_files_display.setReadOnly(True)
+
         self.meta_layout.addRow("DUT_VERSION:", self.dut_version_display)
         self.meta_layout.addRow("LENS_Color:", self.lens_color_display)
         self.meta_layout.addRow("Total Row Count (總筆數):", self.total_rows_display)
+        self.meta_layout.addRow("Total File Count (總檔案數):", self.total_files_display)
         self.main_layout.addWidget(self.meta_group)
 
         # 3. Action Buttons
@@ -68,6 +72,7 @@ class ALS_TestReportParserApp(QMainWindow):
             "Min (最小值)",
             "Avg (平均值)"
         ])
+        self.results_table.setColumnWidth(0, 300)
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_layout.addWidget(self.results_table)
 
@@ -102,6 +107,8 @@ class ALS_TestReportParserApp(QMainWindow):
         dut_versions = set()
         lens_colors = set()
         total_valid_rows = 0
+        processed_files_count = 0
+        b2_header_name = "measurement" # default name
         data_by_label = {} # label -> list of floats
 
         import csv
@@ -130,6 +137,14 @@ class ALS_TestReportParserApp(QMainWindow):
             except Exception as e:
                 print(f"Skipping file {file_path} due to error: {e}")
                 continue
+
+            processed_files_count += 1
+
+            # Extract cell B2 (idx 1 in rows_data, column idx 1) if available
+            if len(rows_data) > 1 and len(rows_data[1]) > 1:
+                extracted_b2 = str(rows_data[1][1]).strip().strip('"').strip("'")
+                if extracted_b2:
+                    b2_header_name = extracted_b2
 
             for idx, r in enumerate(rows_data):
                 val_b = str(r[1]).strip()
@@ -172,6 +187,15 @@ class ALS_TestReportParserApp(QMainWindow):
         self.dut_version_display.setText(", ".join(sorted(list(dut_versions))) if dut_versions else "N/A")
         self.lens_color_display.setText(", ".join(sorted(list(lens_colors))) if lens_colors else "N/A")
         self.total_rows_display.setText(str(total_valid_rows))
+        self.total_files_display.setText(str(processed_files_count))
+
+        # Dynamically rename column 0 header label using B2 content (measurement)
+        self.results_table.setHorizontalHeaderLabels([
+            f"{b2_header_name} (B欄名稱)",
+            "Max (最大值)",
+            "Min (最小值)",
+            "Avg (平均值)"
+        ])
 
         # Populate Results Table
         self.results_table.setRowCount(len(data_by_label))
