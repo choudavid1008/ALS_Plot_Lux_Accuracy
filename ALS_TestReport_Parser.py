@@ -1,5 +1,6 @@
 import sys
 import os
+import csv
 import pandas as pd
 import numpy as np
 from PySide6.QtWidgets import (
@@ -123,8 +124,6 @@ class ALS_TestReportParserApp(QMainWindow):
         ordered_keys = []
         data_by_key = {} # (phase, label) -> list of floats
 
-        import csv
-
         for file_path in all_files:
             rows_data = []
             try:
@@ -225,6 +224,9 @@ class ALS_TestReportParserApp(QMainWindow):
 
         # Populate Results Table in insertion order (original CSV sequence)
         self.results_table.setRowCount(len(ordered_keys))
+
+        export_data = []
+
         for row_idx, key in enumerate(ordered_keys):
             phase, label = key
             vals = data_by_key[key]
@@ -239,7 +241,29 @@ class ALS_TestReportParserApp(QMainWindow):
             self.results_table.setItem(row_idx, 3, QTableWidgetItem(f"{max_val:.4f}"))
             self.results_table.setItem(row_idx, 4, QTableWidgetItem(f"{avg_val:.4f}"))
 
-        QMessageBox.information(self, "Success", "Parsing completed successfully!")
+            # Prepare export format
+            export_data.append({
+                "Phase": phase,
+                b2_header_name: label,
+                "Min": min_val,
+                "Max": max_val,
+                "Avg": avg_val
+            })
+
+        # Export Processed Results to Excel
+        if export_data:
+            try:
+                # Save to the selected directory as 'ALS_TestReport_Parser_Data.xlsx'
+                output_xlsx_path = os.path.join(directory, "ALS_TestReport_Parser_Data.xlsx")
+                df_export = pd.DataFrame(export_data)
+
+                # Format columns beautifully and export to excel
+                df_export.to_excel(output_xlsx_path, index=False)
+                print(f"Excel summary exported successfully to {output_xlsx_path}")
+            except Exception as ex:
+                print(f"Error exporting results to Excel: {ex}")
+
+        QMessageBox.information(self, "Success", "Parsing completed successfully and exported to Excel!")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
