@@ -1,0 +1,172 @@
+import sys
+import os
+import pandas as pd
+import numpy as np
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QTableWidget, QTableWidgetItem, QLineEdit, QLabel,
+    QFileDialog, QFormLayout, QGroupBox, QMessageBox
+)
+from PySide6.QtCore import Qt
+
+class ALS_TestReportParserApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("ALS Test Report Parser")
+        self.resize(900, 650)
+
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)
+
+        # 1. Directory Selection Layout
+        self.dir_layout = QHBoxLayout()
+        self.dir_label = QLabel("Directory (目錄):")
+        self.dir_input = QLineEdit()
+        self.dir_input.setPlaceholderText("Select target directory...")
+        self.dir_btn = QPushButton("Set Directory (設定目錄)")
+        self.dir_btn.clicked.connect(self.select_directory)
+
+        self.dir_layout.addWidget(self.dir_label)
+        self.dir_layout.addWidget(self.dir_input)
+        self.dir_layout.addWidget(self.dir_btn)
+        self.main_layout.addLayout(self.dir_layout)
+
+        # 2. Metadata Display Group
+        self.meta_group = QGroupBox("Metadata Info (中繼資料)")
+        self.meta_layout = QFormLayout(self.meta_group)
+
+        self.dut_version_display = QLineEdit()
+        self.dut_version_display.setReadOnly(True)
+
+        self.lens_color_display = QLineEdit()
+        self.lens_color_display.setReadOnly(True)
+
+        self.total_rows_display = QLineEdit()
+        self.total_rows_display.setReadOnly(True)
+
+        self.meta_layout.addRow("DUT_VERSION:", self.dut_version_display)
+        self.meta_layout.addRow("LENS_Color:", self.lens_color_display)
+        self.meta_layout.addRow("Total Row Count (總筆數):", self.total_rows_display)
+        self.main_layout.addWidget(self.meta_group)
+
+        # 3. Action Buttons
+        self.run_btn = QPushButton("Run Parsing (執行)")
+        self.run_btn.clicked.connect(self.run_parsing)
+        self.run_btn.setStyleSheet("font-weight: bold; background-color: #d1e7dd; height: 35px;")
+        self.main_layout.addWidget(self.run_btn)
+
+        # 4. Results Table
+        self.results_group = QGroupBox("Processed Results (分析結果)")
+        self.results_layout = QVBoxLayout(self.results_group)
+
+        self.results_table = QTableWidget()
+        self.results_table.setColumnCount(4)
+        self.results_table.setHorizontalHeaderLabels([
+            "B Column Name (B欄名稱)",
+            "Max (最大值)",
+            "Min (最小值)",
+            "Avg (平均值)"
+        ])
+        self.results_table.horizontalHeader().setStretchLastSection(True)
+        self.results_layout.addWidget(self.results_table)
+
+        self.main_layout.addWidget(self.results_group)
+
+        # State
+        self.target_dir = ""
+
+    def select_directory(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Test Report Directory")
+        if dir_path:
+            self.target_dir = dir_path
+            self.dir_input.setText(dir_path)
+
+    def run_parsing(self):
+        directory = self.dir_input.text().strip()
+        if not directory or not os.path.exists(directory):
+            QMessageBox.warning(self, "Warning", "Please set a valid directory first.")
+            return
+
+        # Find all excel and csv files in the directory
+        valid_extensions = (".xlsx", ".xls", ".csv")
+        all_files = [
+            os.path.join(directory, f) for f in os.listdir(directory)
+            if f.lower().endswith(valid_extensions)
+        ]
+
+        if not all_files:
+            QMessageBox.information(self, "No Files", "No Excel or CSV files found in the specified directory.")
+            return
+
+        dut_versions = set()
+        lens_colors = set()
+        total_valid_rows = 0
+        data_by_label = {} # label -> list of floats
+
+        for file_path in all_files:
+            try:
+                if file_path.lower().endswith(".csv"):
+                    df = pd.read_csv(file_path, header=None)
+                else:
+                    df = pd.read_excel(file_path, header=None)
+            except Exception as e:
+                print(f"Skipping file {file_path} due to error: {e}")
+                continue
+
+            # Ensure the dataframe has at least 2 columns (0 and 1 represent column A and B, 2 is C)
+            if df.shape[1] < 3:
+                continue
+
+            for idx, row in df.iterrows():
+                val_b = str(row[1]).strip() if pd.notna(row[1]) else ""
+                val_c = row[2] if pd.notna(row[2]) else None
+
+                # 1. Get lens_color_number (typically at B3 -> C3)
+                if val_b == "lens_color_number" and val_c is not None:
+                    lens_colors.add(str(val_c).strip())
+
+                # 2. Get DUT_VERSION (typically at B4 -> C4)
+                elif val_b == "DUT_VERSION" and val_c is not None:
+                    dut_versions.add(str(val_c).strip())
+
+                # 4. Extract data starting with cl200a_ref_
+                elif val_b.startswith("cl200a_ref_"):
+                    # 6. Discard rows containing "<Sample_Number>"
+                    if "<Sample_Number>" in val_b:
+                        continue
+
+                    if val_c is not None:
+                        try:
+                            num_val = float(val_c)
+                            if val_b not in data_by_label:
+                                data_by_label[val_b] = []
+                            data_by_label[val_b].append(num_val)
+                            total_valid_rows += 1
+                        except ValueError:
+                            pass
+
+        # Update Metadata displays
+        self.dut_version_display.setText(", ".join(sorted(list(dut_versions))) if dut_versions else "N/A")
+        self.lens_color_display.setText(", ".join(sorted(list(lens_colors))) if lens_colors else "N/A")
+        self.total_rows_display.setText(str(total_valid_rows))
+
+        # Populate Results Table
+        self.results_table.setRowCount(len(data_by_label))
+        for row_idx, (label, vals) in enumerate(sorted(data_by_label.items())):
+            max_val = max(vals)
+            min_val = min(vals)
+            avg_val = np.mean(vals)
+
+            self.results_table.setItem(row_idx, 0, QTableWidgetItem(label))
+            self.results_table.setItem(row_idx, 1, QTableWidgetItem(f"{max_val:.4f}"))
+            self.results_table.setItem(row_idx, 2, QTableWidgetItem(f"{min_val:.4f}"))
+            self.results_table.setItem(row_idx, 3, QTableWidgetItem(f"{avg_val:.4f}"))
+
+        QMessageBox.information(self, "Success", "Parsing completed successfully!")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = ALS_TestReportParserApp()
+    window.show()
+    sys.exit(app.exec())
