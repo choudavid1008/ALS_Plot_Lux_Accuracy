@@ -114,7 +114,7 @@ class ALS_TestReportParserApp(QMainWindow):
 
         dut_versions = set()
         lens_colors = set()
-        total_valid_rows = 0
+        single_file_valid_rows = 0 # Track row count for a single file (last processed file)
         processed_files_count = 0
         b2_header_name = "measurement" # default name
 
@@ -151,6 +151,7 @@ class ALS_TestReportParserApp(QMainWindow):
                 continue
 
             processed_files_count += 1
+            current_file_valid_rows = 0
 
             # Extract cell B2 (idx 1 in rows_data, column idx 1) if available
             if len(rows_data) > 1 and len(rows_data[1]) > 1:
@@ -200,14 +201,17 @@ class ALS_TestReportParserApp(QMainWindow):
                                 ordered_keys.append(key)
 
                             data_by_key[key].append(num_val)
-                            total_valid_rows += 1
+                            current_file_valid_rows += 1
                         except ValueError:
                             pass
+
+            # Update with the valid row count of this file
+            single_file_valid_rows = current_file_valid_rows
 
         # Update Metadata displays
         self.dut_version_display.setText(", ".join(sorted(list(dut_versions))) if dut_versions else "N/A")
         self.lens_color_display.setText(", ".join(sorted(list(lens_colors))) if lens_colors else "N/A")
-        self.total_rows_display.setText(str(total_valid_rows))
+        self.total_rows_display.setText(str(single_file_valid_rows))
         self.total_files_display.setText(str(processed_files_count))
 
         # Dynamically rename column 1 header label using B2 content (measurement)
