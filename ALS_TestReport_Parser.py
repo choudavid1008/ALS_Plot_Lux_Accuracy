@@ -109,6 +109,9 @@ class ALS_TestReportParserApp(QMainWindow):
             if f.lower().endswith(valid_extensions)
         ]
 
+        # Filter out output files from input files if they happen to overlap
+        all_files = [f for f in all_files if "ALS_TestReport_Parser_Data.xlsx" not in os.path.basename(f)]
+
         if not all_files:
             QMessageBox.information(self, "No Files", "No Excel or CSV files found in the specified directory.")
             return
@@ -250,14 +253,14 @@ class ALS_TestReportParserApp(QMainWindow):
                 "Avg": avg_val
             })
 
-        # Export Processed Results to Excel
+        # Export Processed Results to Excel inside output_files folder in current working directory
         if export_data:
             try:
-                # Save to the selected directory as 'ALS_TestReport_Parser_Data.xlsx'
-                output_xlsx_path = os.path.join(directory, "ALS_TestReport_Parser_Data.xlsx")
-                df_export = pd.DataFrame(export_data)
+                output_dir = os.path.join(os.getcwd(), "output_files")
+                os.makedirs(output_dir, exist_ok=True)
+                output_xlsx_path = os.path.join(output_dir, "ALS_TestReport_Parser_Data.xlsx")
 
-                # Format columns beautifully and export to excel
+                df_export = pd.DataFrame(export_data)
                 df_export.to_excel(output_xlsx_path, index=False)
                 print(f"Excel summary exported successfully to {output_xlsx_path}")
             except Exception as ex:
