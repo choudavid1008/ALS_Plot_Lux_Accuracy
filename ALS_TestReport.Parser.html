@@ -316,7 +316,7 @@
                 exportToExcel();
 
                 setTimeout(() => {
-                    alert('分析完成！已自動將 Processed Results 匯出至 ALS_TestReport_Parser_Data.xlsx 下載目錄中。');
+                    alert('分析完成！已自動將 Processed Results 匯出至 output_files/ALS_TestReport_Parser_Data.xlsx 下載目錄中。');
                 }, 100);
             });
 
@@ -409,8 +409,8 @@
                 const workbook = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(workbook, worksheet, "Processed Results");
 
-                // Export to binary cell and download
-                XLSX.writeFile(workbook, "ALS_TestReport_Parser_Data.xlsx");
+                // Export to binary cell and download (using output_files/ prefix)
+                XLSX.writeFile(workbook, "output_files/ALS_TestReport_Parser_Data.xlsx");
             }
         });
     </script>
