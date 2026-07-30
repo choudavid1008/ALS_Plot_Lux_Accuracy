@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ALS Test Report Parser</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS (xlsx.full.min.js) for reading Excel & CSV -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+    <div class="max-w-6xl mx-auto p-6 space-y-6">
+
+        <!-- Header / App Title -->
+        <div class="bg-white p-6 rounded-lg shadow-md flex items-center justify-between border-l-4 border-indigo-600">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900">ALS Test Report Parser</h1>
+                <p class="text-sm text-gray-500 mt-1">網頁版 ALS 測試報告分析與資料匯出工具</p>
+            </div>
+            <div class="text-indigo-600 font-semibold text-lg bg-indigo-50 px-3 py-1 rounded-full">
+                HTML Web Suite
+            </div>
+        </div>
+
+        <!-- 1. Directory Selection -->
+        <div class="bg-white p-6 rounded-lg shadow-md space-y-4">
+            <h2 class="text-lg font-semibold text-gray-800 border-b pb-2">Directory Selection (設定目錄)</h2>
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-600 mb-1">選擇測試報告資料夾 (Select Directory):</label>
+                    <input
+                        type="file"
+                        id="dirInput"
+                        webkitdirectory
+                        directory
+                        multiple
+                        class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border border-gray-300 rounded-md p-1"
+                    />
+                </div>
+                <div class="flex items-end">
+                    <button
+                        id="runBtn"
+                        class="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-md shadow-md transition duration-200"
+                    >
+                        Run Parsing (執行)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Metadata Display Group -->
+        <div class="bg-white p-6 rounded-lg shadow-md space-y-4">
+            <h2 class="text-lg font-semibold text-gray-800 border-b pb-2">Metadata Info (中繼資料)</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">DUT_VERSION:</label>
+                    <input
+                        type="text"
+                        id="dutVersion"
+                        readonly
+                        value="N/A"
+                        class="w-full bg-gray-50 border border-gray-300 text-gray-600 rounded-md py-2 px-3 focus:outline-none cursor-default"
+                    />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">LENS_Color:</label>
+                    <input
+                        type="text"
+                        id="lensColor"
+                        readonly
+                        value="N/A"
+                        class="w-full bg-gray-50 border border-gray-300 text-gray-600 rounded-md py-2 px-3 focus:outline-none cursor-default"
+                    />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Total Row Count (單一檔案有效筆數):</label>
+                    <input
+                        type="text"
+                        id="totalRows"
+                        readonly
+                        value="0"
+                        class="w-full bg-gray-50 border border-gray-300 text-gray-600 rounded-md py-2 px-3 focus:outline-none cursor-default"
+                    />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">Total File Count (總檔案數):</label>
+                    <input
+                        type="text"
+                        id="totalFiles"
+                        readonly
+                        value="0"
+                        class="w-full bg-gray-50 border border-gray-300 text-gray-600 rounded-md py-2 px-3 focus:outline-none cursor-default"
+                    />
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Processed Results Table -->
+        <div class="bg-white p-6 rounded-lg shadow-md space-y-4">
+            <div class="flex items-center justify-between border-b pb-2 flex-wrap gap-2">
+                <h2 class="text-lg font-semibold text-gray-800">Processed Results (分析結果)</h2>
+                <button
+                    id="exportBtn"
+                    disabled
+                    class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-1.5 px-4 rounded-md shadow text-sm transition"
+                >
+                    Export to Excel (匯出至 Excel)
+                </button>
+            </div>
+
+            <div class="overflow-x-auto border rounded-lg">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
+                                Phase (測試階段)
+                            </th>
+                            <th scope="col" id="headerMeasurement" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[300px]">
+                                Measurement (B欄名稱)
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                Min (最小值)
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                Max (最大值)
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                Avg (平均值)
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsBody" class="bg-white divide-y divide-gray-200">
+                        <!-- Dynamic Results will go here -->
+                        <tr>
+                            <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-400 italic">
+                                請選擇資料夾並點擊「Run Parsing」執行分析
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Main Logic Script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const dirInput = document.getElementById('dirInput');
+            const runBtn = document.getElementById('runBtn');
+            const exportBtn = document.getElementById('exportBtn');
+            const resultsBody = document.getElementById('resultsBody');
+
+            const dutVersionInput = document.getElementById('dutVersion');
+            const lensColorInput = document.getElementById('lensColor');
+            const totalRowsInput = document.getElementById('totalRows');
+            const totalFilesInput = document.getElementById('totalFiles');
+            const headerMeasurement = document.getElementById('headerMeasurement');
+
+            let currentParsedData = []; // Array of {Phase, Measurement, Min, Max, Avg}
+            let b2HeaderName = "measurement"; // default
+
+            runBtn.addEventListener('click', async () => {
+                const files = dirInput.files;
+                if (!files || files.length === 0) {
+                    alert('請先選擇一個有效的測試報告資料夾。');
+                    return;
+                }
+
+                // Filter valid extensions (.xlsx, .xls, .csv)
+                const validFiles = Array.from(files).filter(file => {
+                    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+                    return ['.xlsx', '.xls', '.csv'].includes(ext);
+                });
+
+                if (validFiles.length === 0) {
+                    alert('所選資料夾中沒有找到有效的 Excel (.xlsx, .xls) 或 CSV (.csv) 檔案。');
+                    return;
+                }
+
+                // Reset state variables
+                const dutVersionsSet = new Set();
+                const lensColorsSet = new Set();
+                let processedFilesCount = 0;
+                let lastFileValidRows = 0;
+                b2HeaderName = "measurement"; // default
+
+                const orderedKeys = []; // Array of "Phase|||Measurement"
+                const dataByKey = {};   // "Phase|||Measurement" -> Array of numbers
+
+                // Process files sequentially
+                for (let file of validFiles) {
+                    try {
+                        const rowsData = await readFileData(file);
+                        if (rowsData.length === 0) continue;
+
+                        processedFilesCount++;
+                        let currentFileValidRows = 0;
+
+                        // 1. Extract dynamic Column B header from row index 1 (cell B2) if present
+                        if (rowsData.length > 1 && rowsData[1].length > 1) {
+                            const b2Raw = (rowsData[1][1] || "").toString().trim();
+                            if (b2Raw) {
+                                b2HeaderName = b2Raw;
+                            }
+                        }
+
+                        // 2. Loop through all rows of rowsData
+                        for (let idx = 0; idx < rowsData.length; idx++) {
+                            const row = rowsData[idx];
+                            // Pad row up to 3 columns if short
+                            const valA = (row[0] || "").toString().trim();
+                            const valB = (row[1] || "").toString().trim();
+                            const valC = row[2] !== undefined && row[2] !== null ? row[2].toString().trim() : null;
+
+                            // Metadata checking
+                            if (valB === "lens_color_number" && valC !== null && valC !== "") {
+                                lensColorsSet.add(valC.replace(/['"]/g, ''));
+                            } else if (valB === "DUT_VERSION" && valC !== null && valC !== "") {
+                                dutVersionsSet.add(valC.replace(/['"]/g, ''));
+                            }
+                            // Rows parsing from B7 index 6 onwards
+                            else if (idx >= 6) {
+                                if (valB === "") {
+                                    // Stop reading this file's measurements upon empty Column B cell
+                                    break;
+                                }
+
+                                if (valB === "measurement") {
+                                    continue;
+                                }
+
+                                if (valB.includes("<Sample_Number>")) {
+                                    continue;
+                                }
+
+                                if (valC !== null && valC !== "") {
+                                    const numVal = parseFloat(valC.replace(/['"]/g, ''));
+                                    if (!isNaN(numVal)) {
+                                        const compositeKey = `${valA}|||${valB}`;
+                                        if (!dataByKey[compositeKey]) {
+                                            dataByKey[compositeKey] = [];
+                                            orderedKeys.push(compositeKey);
+                                        }
+                                        dataByKey[compositeKey].push(numVal);
+                                        currentFileValidRows++;
+                                    }
+                                }
+                            }
+                        }
+
+                        lastFileValidRows = currentFileValidRows;
+
+                    } catch (err) {
+                        console.error(`Skipping file ${file.name} due to parsing error:`, err);
+                    }
+                }
+
+                // Update Metadata Inputs
+                dutVersionInput.value = dutVersionsSet.size > 0 ? Array.from(dutVersionsSet).sort().join(", ") : "N/A";
+                lensColorInput.value = lensColorsSet.size > 0 ? Array.from(lensColorsSet).sort().join(", ") : "N/A";
+                totalRowsInput.value = lastFileValidRows.toString();
+                totalFilesInput.value = processedFilesCount.toString();
+
+                // Update Header Label
+                headerMeasurement.innerText = `${b2HeaderName} (B欄名稱)`;
+
+                // Render Processed Results Table
+                resultsBody.innerHTML = "";
+                currentParsedData = [];
+
+                if (orderedKeys.length === 0) {
+                    resultsBody.innerHTML = `
+                        <tr>
+                            <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-400 italic">
+                                沒有找到有效的數據記錄。
+                            </td>
+                        </tr>
+                    `;
+                    exportBtn.disabled = true;
+                    return;
+                }
+
+                orderedKeys.forEach(compositeKey => {
+                    const [phase, label] = compositeKey.split("|||");
+                    const vals = dataByKey[compositeKey];
+
+                    const minVal = Math.min(...vals);
+                    const maxVal = Math.max(...vals);
+                    const avgVal = vals.reduce((sum, v) => sum + v, 0) / vals.length;
+
+                    currentParsedData.push({
+                        "Phase": phase,
+                        [b2HeaderName]: label,
+                        "Min": minVal,
+                        "Max": maxVal,
+                        "Avg": avgVal
+                    });
+
+                    const tr = document.createElement('tr');
+                    tr.className = "hover:bg-gray-50 transition";
+                    tr.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${phase}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${label}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">${minVal.toFixed(4)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">${maxVal.toFixed(4)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">${avgVal.toFixed(4)}</td>
+                    `;
+                    resultsBody.appendChild(tr);
+                });
+
+                exportBtn.disabled = false;
+
+                // Auto Trigger Excel Export Download upon complete parsing
+                exportToExcel();
+
+                setTimeout(() => {
+                    alert('分析完成！已自動將 Processed Results 匯出至 ALS_TestReport_Parser_Data.xlsx 下載目錄中。');
+                }, 100);
+            });
+
+            // Trigger Manual Excel Export button click
+            exportBtn.addEventListener('click', () => {
+                exportToExcel();
+            });
+
+            // Helper function to read file (CSV or XLS/XLSX)
+            function readFileData(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+
+                    if (ext === '.csv') {
+                        reader.onload = (e) => {
+                            const text = e.target.result;
+                            const rows = parseCSVText(text);
+                            resolve(rows);
+                        };
+                        reader.onerror = (err) => reject(err);
+                        reader.readAsText(file, 'utf-8');
+                    } else {
+                        // xls, xlsx
+                        reader.onload = (e) => {
+                            try {
+                                const data = new Uint8Array(e.target.result);
+                                const workbook = XLSX.read(data, { type: 'array' });
+                                // Read the first sheet
+                                const sheetName = workbook.SheetNames[0];
+                                const worksheet = workbook.Sheets[sheetName];
+                                // Convert to range array with empty rows intact
+                                const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                                resolve(rows);
+                            } catch (err) {
+                                reject(err);
+                            }
+                        };
+                        reader.onerror = (err) => reject(err);
+                        reader.readAsArrayBuffer(file);
+                    }
+                });
+            }
+
+            // Simple line-by-line CSV parser mimicking python's csv.reader
+            function parseCSVText(text) {
+                const lines = text.split(/\r?\n/);
+                const result = [];
+                lines.forEach(line => {
+                    if (!line.trim() && lines.indexOf(line) === lines.length - 1) return; // skip last empty line
+
+                    const row = [];
+                    let insideQuote = false;
+                    let currentCell = "";
+
+                    for (let i = 0; i < line.length; i++) {
+                        const char = line[i];
+                        if (char === '"') {
+                            insideQuote = !insideQuote;
+                        } else if (char === ',' && !insideQuote) {
+                            row.push(currentCell.trim());
+                            currentCell = "";
+                        } else {
+                            currentCell += char;
+                        }
+                    }
+                    row.push(currentCell.trim());
+                    result.push(row);
+                });
+                return result;
+            }
+
+            // SheetJS Excel Export logic
+            function exportToExcel() {
+                if (currentParsedData.length === 0) return;
+
+                // Format structure matching Python columns
+                const formattedList = currentParsedData.map(item => {
+                    return {
+                        "Phase": item.Phase,
+                        [b2HeaderName]: item[b2HeaderName],
+                        "Min": item.Min,
+                        "Max": item.Max,
+                        "Avg": item.Avg
+                    };
+                });
+
+                // Create spreadsheet worksheet and workbook
+                const worksheet = XLSX.utils.json_to_sheet(formattedList);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Processed Results");
+
+                // Export to binary cell and download
+                XLSX.writeFile(workbook, "ALS_TestReport_Parser_Data.xlsx");
+            }
+        });
+    </script>
+</body>
+</html>
