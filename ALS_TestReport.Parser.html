@@ -51,7 +51,7 @@
 
         <!-- 2. Metadata Display Group -->
         <div class="bg-white p-6 rounded-lg shadow-md space-y-4">
-            <h2 class="text-lg font-semibold text-gray-800 border-b pb-2">Metadata Info (中繼資料)</h2>
+            <h2 class="text-lg font-semibold text-gray-800 border-b pb-2">Metadata Info & Filter (中繼資料與過濾)</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">DUT_VERSION:</label>
@@ -64,14 +64,18 @@
                     />
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1">LENS_Color:</label>
-                    <input
-                        type="text"
-                        id="lensColor"
-                        readonly
-                        value="N/A"
-                        class="w-full bg-gray-50 border border-gray-300 text-gray-600 rounded-md py-2 px-3 focus:outline-none cursor-default"
-                    />
+                    <label class="block text-sm font-medium text-gray-600 mb-1">LENS_Color (過濾):</label>
+                    <select
+                        id="lensColorFilter"
+                        class="w-full bg-white border border-gray-300 text-gray-800 rounded-md py-2 px-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                        <option value="all">all</option>
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                    </select>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">Total Row Count (單一檔案有效筆數):</label>
@@ -153,7 +157,7 @@
             const resultsBody = document.getElementById('resultsBody');
 
             const dutVersionInput = document.getElementById('dutVersion');
-            const lensColorInput = document.getElementById('lensColor');
+            const lensColorFilter = document.getElementById('lensColorFilter');
             const totalRowsInput = document.getElementById('totalRows');
             const totalFilesInput = document.getElementById('totalFiles');
             const headerMeasurement = document.getElementById('headerMeasurement');
@@ -181,7 +185,6 @@
 
                 // Reset state variables
                 const dutVersionsSet = new Set();
-                const lensColorsSet = new Set();
                 let processedFilesCount = 0;
                 let lastFileValidRows = 0;
                 b2HeaderName = "measurement"; // default
@@ -189,11 +192,34 @@
                 const orderedKeys = []; // Array of "Phase|||Measurement"
                 const dataByKey = {};   // "Phase|||Measurement" -> Array of numbers
 
+                const selectedLensFilter = lensColorFilter.value;
+
                 // Process files sequentially
                 for (let file of validFiles) {
                     try {
                         const rowsData = await readFileData(file);
                         if (rowsData.length === 0) continue;
+
+                        // First, scan this file's rows to extract its lens_color_number
+                        let fileLensColor = null;
+                        for (let idx = 0; idx < rowsData.length; idx++) {
+                            const row = rowsData[idx];
+                            const valB = (row[1] || "").toString().trim();
+                            const valC = row[2] !== undefined && row[2] !== null ? row[2].toString().trim() : null;
+                            if (valB === "lens_color_number" && valC !== null) {
+                                fileLensColor = valC.replace(/['"]/g, '');
+                                break;
+                            }
+                        }
+
+                        // If lens_color_filter is not "all", perform matching check
+                        if (selectedLensFilter !== "all") {
+                            const colorStr = fileLensColor !== null ? fileLensColor : "";
+                            if (colorStr !== selectedLensFilter) {
+                                // Skip parsing this file
+                                continue;
+                            }
+                        }
 
                         processedFilesCount++;
                         let currentFileValidRows = 0;
@@ -215,9 +241,7 @@
                             const valC = row[2] !== undefined && row[2] !== null ? row[2].toString().trim() : null;
 
                             // Metadata checking
-                            if (valB === "lens_color_number" && valC !== null && valC !== "") {
-                                lensColorsSet.add(valC.replace(/['"]/g, ''));
-                            } else if (valB === "DUT_VERSION" && valC !== null && valC !== "") {
+                            if (valB === "DUT_VERSION" && valC !== null && valC !== "") {
                                 dutVersionsSet.add(valC.replace(/['"]/g, ''));
                             }
                             // Rows parsing from B7 index 6 onwards
@@ -259,7 +283,6 @@
 
                 // Update Metadata Inputs
                 dutVersionInput.value = dutVersionsSet.size > 0 ? Array.from(dutVersionsSet).sort().join(", ") : "N/A";
-                lensColorInput.value = lensColorsSet.size > 0 ? Array.from(lensColorsSet).sort().join(", ") : "N/A";
                 totalRowsInput.value = lastFileValidRows.toString();
                 totalFilesInput.value = processedFilesCount.toString();
 
@@ -274,7 +297,7 @@
                     resultsBody.innerHTML = `
                         <tr>
                             <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-400 italic">
-                                沒有找到有效的數據記錄。
+                                沒有找到符合條件的數據記錄。
                             </td>
                         </tr>
                     `;

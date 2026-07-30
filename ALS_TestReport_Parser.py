@@ -6,7 +6,7 @@ import numpy as np
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTableWidget, QTableWidgetItem, QLineEdit, QLabel,
-    QFileDialog, QFormLayout, QGroupBox, QMessageBox
+    QFileDialog, QFormLayout, QGroupBox, QMessageBox, QComboBox
 )
 from PySide6.QtCore import Qt
 
@@ -43,14 +43,15 @@ class ALS_TestReportParserApp(QMainWindow):
         self.main_layout.addLayout(self.dir_layout)
 
         # 2. Metadata Display Group
-        self.meta_group = QGroupBox("Metadata Info (中繼資料)")
+        self.meta_group = QGroupBox("Metadata Info & Filter (中繼資料與過濾)")
         self.meta_layout = QFormLayout(self.meta_group)
 
         self.dut_version_display = QLineEdit()
         self.dut_version_display.setReadOnly(True)
 
-        self.lens_color_display = QLineEdit()
-        self.lens_color_display.setReadOnly(True)
+        # LENS_Color is now an interactive filter combo box
+        self.lens_color_filter = QComboBox()
+        self.lens_color_filter.addItems(["all", "0", "1", "2", "3", "4"])
 
         self.total_rows_display = QLineEdit()
         self.total_rows_display.setReadOnly(True)
@@ -59,8 +60,8 @@ class ALS_TestReportParserApp(QMainWindow):
         self.total_files_display.setReadOnly(True)
 
         self.meta_layout.addRow("DUT_VERSION:", self.dut_version_display)
-        self.meta_layout.addRow("LENS_Color:", self.lens_color_display)
-        self.meta_layout.addRow("Total Row Count (總筆數):", self.total_rows_display)
+        self.meta_layout.addRow("LENS_Color (過濾):", self.lens_color_filter)
+        self.meta_layout.addRow("Total Row Count (單一檔案有效筆數):", self.total_rows_display)
         self.meta_layout.addRow("Total File Count (總檔案數):", self.total_files_display)
         self.main_layout.addWidget(self.meta_group)
 
@@ -117,10 +118,12 @@ class ALS_TestReportParserApp(QMainWindow):
             return
 
         dut_versions = set()
-        lens_colors = set()
         single_file_valid_rows = 0 # Track row count for a single file (last processed file)
         processed_files_count = 0
         b2_header_name = "measurement" # default name
+
+        # Get selected lens color filter value
+        selected_lens_filter = self.lens_color_filter.currentText()
 
         # Use a list-based insertion tracker to preserve the original row order,
         # but map keys of (phase, label) -> list of floats
@@ -152,6 +155,25 @@ class ALS_TestReportParserApp(QMainWindow):
                 print(f"Skipping file {file_path} due to error: {e}")
                 continue
 
+            # First, scan this file's rows to extract its lens_color_number
+            file_lens_color = None
+            for idx, r in enumerate(rows_data):
+                val_b = str(r[1]).strip()
+                val_c_raw = r[2].strip() if isinstance(r[2], str) else r[2]
+                val_c = val_c_raw if val_c_raw != "" else None
+
+                if val_b == "lens_color_number" and val_c is not None:
+                    file_lens_color = str(val_c).strip().strip('"').strip("'")
+                    break
+
+            # If lens_color_filter is not "all", perform matching check
+            if selected_lens_filter != "all":
+                # Convert both to string for robust comparison, default to empty if not found
+                color_str = file_lens_color if file_lens_color is not None else ""
+                if color_str != selected_lens_filter:
+                    # Skip parsing this file
+                    continue
+
             processed_files_count += 1
             current_file_valid_rows = 0
 
@@ -167,18 +189,12 @@ class ALS_TestReportParserApp(QMainWindow):
                 val_c_raw = r[2].strip() if isinstance(r[2], str) else r[2]
                 val_c = val_c_raw if val_c_raw != "" else None
 
-                # 1. Get lens_color_number (typically at B3 -> C3)
-                if val_b == "lens_color_number" and val_c is not None:
-                    # Strip quotes if any
-                    clean_val = str(val_c).strip().strip('"').strip("'")
-                    lens_colors.add(clean_val)
-
-                # 2. Get DUT_VERSION (typically at B4 -> C4)
-                elif val_b == "DUT_VERSION" and val_c is not None:
+                # DUT_VERSION check
+                if val_b == "DUT_VERSION" and val_c is not None:
                     clean_val = str(val_c).strip().strip('"').strip("'")
                     dut_versions.add(clean_val)
 
-                # 3. Handle rows from B7 onwards (idx >= 6) until Column B is empty
+                # Handle rows from B7 onwards (idx >= 6) until Column B is empty
                 elif idx >= 6:
                     if val_b == "":
                         # Break out of the row processing loop as soon as Column B is empty
@@ -212,7 +228,6 @@ class ALS_TestReportParserApp(QMainWindow):
 
         # Update Metadata displays
         self.dut_version_display.setText(", ".join(sorted(list(dut_versions))) if dut_versions else "N/A")
-        self.lens_color_display.setText(", ".join(sorted(list(lens_colors))) if lens_colors else "N/A")
         self.total_rows_display.setText(str(single_file_valid_rows))
         self.total_files_display.setText(str(processed_files_count))
 
